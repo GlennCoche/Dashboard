@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Fichiers temporaires
+~$*.xlsx
+.DS_Store
+*.swp
+*.swo
+
+# IDEs
+.vscode/
+.idea/
+
+# Scripts locaux (optionnel - commentez si vous voulez les garder)
+*.sh
+*.app/
+
+# Backups
+backup/
+
+# Logs
+*.log
+
+# Fichiers de test
+test_*.py
+demo_*.py
+
+# Fichiers de configuration locaux sensibles
+cursor_mcp_config*.json
+
