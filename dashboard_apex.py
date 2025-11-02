@@ -8,6 +8,17 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Import du module d'authentification
+try:
+    from auth import check_password, logout_button
+    AUTH_ENABLED = True
+except ImportError:
+    AUTH_ENABLED = False
+    def check_password():
+        return True
+    def logout_button():
+        pass
+
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Exploitation Apex",
@@ -15,6 +26,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Vérification du mot de passe avant de continuer
+if AUTH_ENABLED and not check_password():
+    st.stop()  # Arrêter l'exécution si l'authentification échoue
 
 DB_PATH = "Dashboard Apex.db"
 
@@ -9165,5 +9180,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Afficher le bouton de déconnexion si l'authentification est activée
+    if AUTH_ENABLED:
+        logout_button()
     main()
 
