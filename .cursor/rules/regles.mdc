@@ -1,0 +1,374 @@
+---
+alwaysApply: true
+---
+
+# 🎯 Règles Projet - Dashboard KPI Energysoft
+
+## 📊 Contexte du Projet
+
+**Objectif Principal:** Créer un dashboard KPI interactif, modulaire et design pour l'analyse des données de maintenance et performance Energysoft.
+
+**Données Principales:**
+- **Excel:** `All Stats Energysoft.xlsx` (source principale)
+- **SQLite:** `energysoft_stats.db` (base de données opérationnelle)
+- **Dashboard:** `dashboard.py` (application Streamlit)
+
+## 🔧 MCP Disponibles et Utilisation Automatique
+
+### Mapping Automatique Demande → MCP
+
+| Type de Demande | MCP à Utiliser | Outils Clés |
+|----------------|----------------|-------------|
+| Lecture/Modification Excel | `excel` | read_excel, write_excel, list_sheets |
+| Requêtes/Modifications SQLite | `sqlite` | query, list_tables, get_schema |
+| Manipulations dates/temps | `mcp-time` | current_time, relative_time, convert_timezone |
+| Analyses/Transformations | `pandas` | groupby_analysis, pivot_table, merge |
+| Visualisations/Graphiques | `plotly` | create_bar_chart, create_line_chart, timeline |
+| Prédictions/ML | `ml` | predict_trend, detect_anomalies, forecast |
+| Statistiques avancées | `statistics` | correlation, hypothesis_test, regression |
+
+## 🎯 Règles d'Utilisation Automatique par Contexte
+
+### Contexte: Fichier Excel
+
+**Déclencheurs automatiques:**
+- Mention de "Excel", "All Stats Energysoft", ".xlsx"
+- Demande de lecture/extraction/modification de données Excel
+- Besoin de lire une feuille spécifique
+- Export de données vers Excel
+
+**Action:** **TOUJOURS** utiliser `excel` MCP en premier
+
+**Workflow typique:**
+```
+1. excel MCP → list_sheets() pour voir les feuilles disponibles
+2. excel MCP → read_excel() pour extraire les données
+3. Si transformation nécessaire → pandas MCP
+4. Si visualisation → plotly MCP
+```
+
+### Contexte: Base SQLite
+
+**Déclencheurs automatiques:**
+- Mention de "SQLite", "base de données", "db"
+- Nom de table (interventions, ticket.operator, etc.)
+- Demande de requête SQL
+- CRUD opérations
+
+**Action:** **TOUJOURS** utiliser `sqlite` MCP
+
+**Workflow typique:**
+```
+1. sqlite MCP → list_tables() pour explorer
+2. sqlite MCP → query() pour extraire données
+3. Si analyses → pandas MCP ou statistics MCP
+4. Si visualisation → plotly MCP
+```
+
+### Contexte: Analyses Temporelles
+
+**Déclencheurs automatiques:**
+- Mention de dates, périodes, "mois", "semaine", "année"
+- "Depuis", "jusqu'à", "entre"
+- Agrégations temporelles
+- Conversions timezone
+
+**Action:** **TOUJOURS** utiliser `mcp-time` MCP pour manipulations dates
+
+**Workflow typique:**
+```
+1. mcp-time MCP → convert_timezone() si nécessaire
+2. mcp-time MCP → relative_time() pour parsing naturel
+3. sqlite MCP → query avec filtres temporels
+4. pandas MCP → groupby par période
+5. plotly MCP → timeline_chart pour visualiser
+```
+
+### Contexte: Visualisations
+
+**Déclencheurs automatiques:**
+- "Graphique", "chart", "visualiser", "courbe"
+- "Barre", "ligne", "camembert", "map", "carte"
+- "Dashboard", "tableau de bord"
+
+**Action:** **TOUJOURS** utiliser `plotly` MCP pour générer graphiques
+
+**Workflow typique:**
+```
+1. Extraire données (sqlite ou excel MCP)
+2. Préparer avec pandas MCP si nécessaire
+3. plotly MCP → create_*_chart()
+4. Intégrer dans dashboard.py (Streamlit)
+```
+
+### Contexte: Machine Learning
+
+**Déclencheurs automatiques:**
+- "Prédire", "prédiction", "forecast", "tendance future"
+- "Anomalie", "détecter anomalie"
+- "Classification", "scénario", "what-if"
+
+**Action:** **TOUJOURS** utiliser `ml` MCP
+
+**Workflow typique:**
+```
+1. Extraire données (sqlite MCP)
+2. Préparer avec pandas MCP
+3. ml MCP → predict_trend() ou detect_anomalies()
+4. Visualiser avec plotly MCP
+5. Intégrer dans dashboard avec indicateurs ML
+```
+
+### Contexte: Analyses Statistiques
+
+**Déclencheurs automatiques:**
+- "Corrélation", "statistiques", "test"
+- "Régression", "hypothèse", "ANOVA"
+- "Comparer groupes", "significativité"
+
+**Action:** **TOUJOURS** utiliser `statistics` MCP
+
+**Workflow typique:**
+```
+1. Extraire données (sqlite MCP)
+2. statistics MCP → calculate_correlation() ou regression_analysis()
+3. Présenter résultats avec interprétations
+4. Visualiser avec plotly MCP
+```
+
+## 🎨 Standards Dashboard
+
+### Structure Dashboard Streamlit
+
+**Obligatoire:**
+- Layout wide (`st.set_page_config(layout="wide")`)
+- Sidebar pour filtres
+- Sections modulaires (KPI, Graphiques, Analyses, ML)
+- Cache des données (`@st.cache_data`)
+- Gestion d'erreurs robuste
+
+### Composants Standards
+
+**1. En-tête:**
+```python
+st.title("📊 Dashboard Energysoft")
+st.markdown("---")
+```
+
+**2. KPI Cards:**
+```python
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Interventions", value, delta)
+```
+
+**3. Filtres Sidebar:**
+```python
+with st.sidebar:
+    st.date_input("Date début", ...)
+    st.selectbox("Site", ...)
+```
+
+**4. Graphiques Plotly:**
+```python
+fig = plotly_figure_from_mcp()
+st.plotly_chart(fig, use_container_width=True)
+```
+
+### Design Guidelines
+
+- **Couleurs:** Palette cohérente (bleu énergétique #1f77b4)
+- **Responsive:** Adapté à toutes les tailles d'écran
+- **Interactif:** Filtres, sélecteurs, zooms
+- **Performance:** Cache, requêtes optimisées
+- **Accessibilité:** Labels clairs, contraste
+
+## 📈 Types de KPI à Calculer Automatiquement
+
+Quand l'utilisateur demande un dashboard ou des analyses:
+
+**KPI de Maintenance:**
+- Nombre total d'interventions
+- Taux de résolution
+- Temps moyen de résolution
+- Coût moyen par intervention
+- Top sites par nombre d'interventions
+
+**KPI de Performance:**
+- Évolution temporelle des interventions
+- Distribution par opérateur
+- Tendances saisonnières
+- Prédictions futures
+
+**KPI d'Analyses:**
+- Corrélations entre variables
+- Détection d'anomalies
+- Comparaisons de groupes
+- Régressions
+
+## 🗺️ Cartographie (Maps)
+
+Si données géographiques disponibles:
+- Utiliser Plotly Geo ou Folium
+- Créer maps interactives des sites
+- Visualiser interventions par localisation
+- Heatmaps géographiques
+
+## 🔄 Workflows Complets Recommandés
+
+### Workflow: Analyse Complète
+
+```
+1. excel MCP → Extraire données Excel
+2. sqlite MCP → Importer dans SQLite (si nécessaire)
+3. sqlite MCP → Requêtes d'analyse
+4. pandas MCP → Transformations
+5. statistics MCP → Analyses statistiques
+6. ml MCP → Prédictions/anomalies
+7. plotly MCP → Visualisations
+8. dashboard.py → Intégration Streamlit
+```
+
+### Workflow: Dashboard Interactif
+
+```
+1. sqlite MCP → Extraire données principales
+2. mcp-time MCP → Préparer filtres temporels
+3. pandas MCP → Calculer KPI
+4. plotly MCP → Générer tous les graphiques
+5. Modifier dashboard.py avec:
+   - Sections modulaires
+   - Filtres interactifs
+   - Graphiques Plotly intégrés
+   - Design moderne
+```
+
+### Workflow: Analyses ML Avancées
+
+```
+1. sqlite MCP → Dataset complet
+2. pandas MCP → Feature engineering
+3. ml MCP → Prédictions/anomalies/classification
+4. statistics MCP → Validation statistique
+5. plotly MCP → Visualiser prédictions
+6. Intégrer dans dashboard avec onglet ML
+```
+
+## 🚫 Ce Qui Est Interdit
+
+- ❌ Écrire du code qui lit Excel directement avec pandas (utiliser excel MCP)
+- ❌ Faire des requêtes SQL directes sans sqlite MCP
+- ❌ Créer des graphiques statiques (toujours utiliser plotly MCP)
+- ❌ Ignorer les optimisations de performance
+- ❌ Créer des dashboards non-modulaires
+
+## ✅ Ce Qui Est Obligatoire
+
+- ✅ Utiliser les MCP pour toutes les opérations de données
+- ✅ Combiner plusieurs MCP quand pertinent
+- ✅ Créer des dashboards modulaires et réutilisables
+- ✅ Ajouter gestion d'erreurs complète
+- ✅ Optimiser les performances (cache, index)
+- ✅ Proposer des améliorations proactives
+
+## 🔄 Synchronisation GitHub Automatique
+
+### Règle de Synchronisation Continue
+
+**À chaque modification du projet** (nouveau développement, modification de code, ajout de fichiers, etc.), l'Agent Cursor **DOIT** :
+
+1. **Détecter automatiquement les changements**
+   - Fichiers modifiés, créés, ou supprimés
+   - Changements dans le code source
+   - Ajout de nouvelles fonctionnalités
+   - Corrections de bugs
+
+2. **Proposer systématiquement la synchronisation GitHub**
+   - Après chaque modification significative
+   - À la fin de chaque tâche de développement
+   - Avant de terminer une session de travail
+
+3. **Processus de proposition :**
+   ```
+   "🔄 Modifications détectées ! Voulez-vous synchroniser avec GitHub ?
+   
+   Fichiers modifiés :
+   - dashboard_apex.py (ajout nouvelle fonctionnalité)
+   - requirements.txt (nouvelle dépendance)
+   
+   Proposer commit et push vers GitHub ? (O/n)"
+   ```
+
+4. **Si l'utilisateur accepte :**
+   - ✅ Vérifier l'état Git (`git status`)
+   - ✅ Ajouter les fichiers modifiés (`git add`)
+   - ✅ Créer un commit avec message descriptif
+   - ✅ Proposer le push vers GitHub (`git push origin main`)
+   - ✅ Informer de la synchronisation réussie
+
+5. **Message de commit automatique :**
+   - Décrire clairement les changements
+   - Format : `"Description courte - Détails des modifications"`
+   - Exemple : `"Amélioration dashboard - Ajout filtres par date et graphique performance"`
+
+### Dépôt GitHub Cible
+
+- **Repository :** `https://github.com/GlennCoche/Dashboard`
+- **Branche principale :** `main`
+- **Déploiement automatique :** Streamlit Cloud se synchronise automatiquement après push
+
+### Workflow Complet
+
+**Après chaque modification de code :**
+
+```
+1. Fin du développement/modification
+2. Agent propose : "Synchroniser avec GitHub ?"
+3. Si accepté → git add, git commit, git push
+4. Confirmation : "✅ Synchronisé avec GitHub"
+5. Info : "Streamlit Cloud redéploiera automatiquement dans ~1-2 min"
+```
+
+### Cas Particuliers
+
+- **Modifications mineures :** Proposer quand même la synchronisation
+- **Plusieurs modifications :** Regrouper en un seul commit descriptif
+- **Erreurs Git :** Informer l'utilisateur et proposer une solution
+- **Conflits :** Détecter et proposer résolution
+
+### Important
+
+- ⚠️ **NE JAMAIS** pusher automatiquement sans confirmation utilisateur
+- ⚠️ **TOUJOURS** demander confirmation avant `git push`
+- ✅ **TOUJOURS** proposer la synchronisation après modifications
+- ✅ Maintenir le dépôt GitHub à jour en permanence
+
+### Commandes Git à Utiliser
+
+```bash
+# Vérifier l'état
+git status
+
+# Ajouter fichiers
+git add [fichiers_modifiés]
+
+# Créer commit descriptif
+git commit -m "Description claire des modifications"
+
+# Push vers GitHub
+git push origin main
+```
+
+---
+
+## 🎯 Priorités
+
+1. **Autonomie:** Utiliser les MCP sans demander
+2. **Performance:** Optimiser requêtes et cache
+3. **Modularité:** Code réutilisable et modulaire
+4. **UX:** Design moderne et interactif
+5. **Fiabilité:** Gestion d'erreurs complète
+
+---
+
+**Objectif Final:** Un dashboard KPI professionnel, interactif, modulaire et performant, utilisant automatiquement tous les MCP disponibles pour offrir la meilleure expérience possible.
