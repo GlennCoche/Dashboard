@@ -6619,24 +6619,24 @@ def show_maintenance_view():
                                 annotation_font_size=10
                             )
                             
-            fig.update_layout(
+                            fig.update_layout(
                                 title=f'',
                                 xaxis_title='Sévérité',
                                 yaxis_title='Taux de respect SLA (%)',
                                 yaxis=dict(range=[0, 100]),
-                height=350,
+                                height=350,
                                 barmode='group',
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            fig = apply_glassmorphism_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                            )
+                            fig = apply_glassmorphism_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
                             st.info(f"Aucune donnée disponible pour {zone}")
     else:
         st.info("Aucune donnée SLA disponible")
     
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
