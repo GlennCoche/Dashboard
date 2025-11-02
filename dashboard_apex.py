@@ -850,15 +850,131 @@ def get_production_irradiation_mensuelle_cumulee():
     return data
 
 
-def get_repartition_interventions():
-    """Répartition interventions par catégorie"""
-    query = """
-    SELECT categorie, COUNT(*) as nb
+def get_repartition_interventions(annees=None, categories=None, zones=None):
+    """Répartition interventions par catégorie avec filtres multiples"""
+    if annees is None:
+        annees = []
+    if isinstance(annees, int):
+        annees = [annees]
+    if categories is None:
+        categories = []
+    if isinstance(categories, str):
+        categories = [categories]
+    if zones is None:
+        zones = []
+    if isinstance(zones, str):
+        zones = [zones]
+    
+    where_conditions = []
+    
+    # Filtre années
+    if annees:
+        annees_str = ','.join(map(str, annees))
+        where_conditions.append(f"CAST(strftime('%Y', interventions.date_creation_intervention) AS INTEGER) IN ({annees_str})")
+    
+    # Filtre catégories
+    if categories:
+        categories_escaped = [c.replace("'", "''") for c in categories]
+        categories_list = "', '".join(categories_escaped)
+        where_conditions.append(f"interventions.categorie IN ('{categories_list}')")
+    else:
+        where_conditions.append("interventions.categorie IS NOT NULL")
+    
+    # Filtre zones (via jointure avec exposition via id_site)
+    join_clause = ""
+    if zones:
+        zones_escaped = [z.replace("'", "''") for z in zones]
+        zones_list = "', '".join(zones_escaped)
+        join_clause = """
+        JOIN exposition e ON interventions.id_site = e.id_site
+        """
+        where_conditions.append(f"e.zone_mainteneur IN ('{zones_list}')")
+    
+    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+    
+    query = f"""
+    SELECT interventions.categorie, COUNT(*) as nb
     FROM interventions
-    WHERE categorie IS NOT NULL
-    GROUP BY categorie
+    {join_clause}
+    WHERE {where_clause}
+    GROUP BY interventions.categorie
     ORDER BY nb DESC
     LIMIT 5
+    """
+    df = load_data_from_db(query)
+    return df if df is not None and not df.empty else pd.DataFrame()
+
+
+def get_repartition_interventions_par_zone(annees=None, categories=None, zones=None):
+    """Répartition interventions par catégorie et zone de maintenance pour affichage dans treemap"""
+    if annees is None:
+        annees = []
+    if isinstance(annees, int):
+        annees = [annees]
+    if categories is None:
+        categories = []
+    if isinstance(categories, str):
+        categories = [categories]
+    if zones is None:
+        zones = []
+    if isinstance(zones, str):
+        zones = [zones]
+    
+    where_conditions = []
+    
+    # Filtre années
+    if annees:
+        annees_str = ','.join(map(str, annees))
+        where_conditions.append(f"CAST(strftime('%Y', interventions.date_creation_intervention) AS INTEGER) IN ({annees_str})")
+    
+    # Filtre catégories
+    if categories:
+        categories_escaped = [c.replace("'", "''") for c in categories]
+        categories_list = "', '".join(categories_escaped)
+        where_conditions.append(f"interventions.categorie IN ('{categories_list}')")
+    else:
+        where_conditions.append("interventions.categorie IS NOT NULL")
+    
+    # Toujours faire la jointure pour récupérer les zones (INNER JOIN pour exclure "Non défini")
+    join_clause = """
+    INNER JOIN exposition e ON interventions.id_site = e.id_site
+    """
+    
+    if zones:
+        zones_escaped = [z.replace("'", "''") for z in zones]
+        zones_list = "', '".join(zones_escaped)
+        where_conditions.append(f"e.zone_mainteneur IN ('{zones_list}')")
+    
+    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+    
+    query = f"""
+    SELECT 
+        interventions.categorie,
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        COUNT(*) as nb_interventions_zone
+    FROM interventions
+    {join_clause}
+    WHERE {where_clause}
+    GROUP BY interventions.categorie, zone_mainteneur
+    ORDER BY interventions.categorie, nb_interventions_zone DESC
+    """
+    df = load_data_from_db(query)
+    return df if df is not None and not df.empty else pd.DataFrame()
+
+
+def get_interventions_severite_par_zone(annee):
+    """Interventions par sévérité et zone de maintenance (exclut "Non défini")"""
+    query = f"""
+    SELECT 
+        i.severite_categorie,
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        COUNT(*) as nb_interventions_zone
+    FROM interventions i
+    INNER JOIN exposition e ON i.id_site = e.id_site
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.severite_categorie IS NOT NULL
+    GROUP BY i.severite_categorie, zone_mainteneur
+    ORDER BY i.severite_categorie, nb_interventions_zone DESC
     """
     df = load_data_from_db(query)
     return df if df is not None and not df.empty else pd.DataFrame()
@@ -4241,33 +4357,221 @@ def show_performance_view():
 # FONCTIONS VUE MAINTENANCE
 # ============================================
 
-def get_chronologie_maintenance(annee):
-    """Chronologie maintenance par mois et catégorie"""
-    query = f"""
-    SELECT 
-        CAST(strftime('%m', date_creation_intervention) AS INTEGER) as mois,
-        categorie,
-        COUNT(*) as nb_interventions
-    FROM interventions
-    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
-    AND categorie IS NOT NULL
-    GROUP BY mois, categorie
-    ORDER BY mois, categorie
+def get_chronologie_maintenance(annees=None, categories=None, zones=None):
+    """Chronologie maintenance par mois et catégorie avec filtres multiples
+    Utilise date_creation_intervention pour toutes les catégories sauf PREVENTIF (date_debut_intervention)
     """
-    df = load_data_from_db(query)
-    return df if df is not None and not df.empty else pd.DataFrame()
-
-
-def get_interventions_par_site(annee, limit=20):
-    """Interventions par site"""
-    query = f"""
+    if annees is None:
+        annees = [2025]
+    if isinstance(annees, int):
+        annees = [annees]
+    if categories is None:
+        categories = []
+    if isinstance(categories, str):
+        categories = [categories]
+    if zones is None:
+        zones = []
+    if isinstance(zones, str):
+        zones = [zones]
+    
+    # Construire la clause WHERE avec filtres
+    where_conditions = []
+    
+    # Filtre catégories
+    if categories:
+        categories_escaped = [c.replace("'", "''") for c in categories]
+        categories_list = "', '".join(categories_escaped)
+        where_conditions.append(f"interventions.categorie IN ('{categories_list}')")
+    else:
+        where_conditions.append("interventions.categorie IS NOT NULL")
+    
+    # Filtre zones (via jointure avec exposition via id_site)
+    join_clause = ""
+    if zones:
+        zones_escaped = [z.replace("'", "''") for z in zones]
+        zones_list = "', '".join(zones_escaped)
+        join_clause = """
+        JOIN exposition e ON interventions.id_site = e.id_site
+        """
+        where_conditions.append(f"e.zone_mainteneur IN ('{zones_list}')")
+    else:
+        # Toujours faire la jointure pour récupérer les zones dans les tooltips (INNER JOIN pour exclure "Non défini")
+        join_clause = """
+        INNER JOIN exposition e ON interventions.id_site = e.id_site
+        """
+    
+    where_conditions_base = " AND ".join(where_conditions) if where_conditions else "1=1"
+    
+    # Requête pour catégories PREVENTIF (utilise date_debut_intervention)
+    where_conditions_preventif = where_conditions.copy()
+    where_conditions_preventif.append("interventions.categorie = 'PREVENTIF'")
+    if annees:
+        annees_str = ','.join(map(str, annees))
+        where_conditions_preventif.append(f"CAST(strftime('%Y', COALESCE(interventions.date_debut_intervention, interventions.date_creation_intervention)) AS INTEGER) IN ({annees_str})")
+    where_clause_preventif = " AND ".join(where_conditions_preventif)
+    
+    # Requête détaillée pour PREVENTIF avec comptage par zone
+    query_preventif_detail = f"""
     SELECT 
-        nom_site,
+        CAST(strftime('%m', COALESCE(interventions.date_debut_intervention, interventions.date_creation_intervention)) AS INTEGER) as mois,
+        interventions.categorie,
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        COUNT(*) as nb_interventions_zone
+    FROM interventions
+    {join_clause}
+    WHERE {where_clause_preventif}
+    AND COALESCE(interventions.date_debut_intervention, interventions.date_creation_intervention) IS NOT NULL
+    GROUP BY mois, interventions.categorie, zone_mainteneur
+    """
+    
+    # Requête agrégée pour PREVENTIF
+    query_preventif = f"""
+    SELECT 
+        CAST(strftime('%m', COALESCE(interventions.date_debut_intervention, interventions.date_creation_intervention)) AS INTEGER) as mois,
+        interventions.categorie,
         COUNT(*) as nb_interventions
     FROM interventions
-    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
-    AND nom_site IS NOT NULL
-    GROUP BY nom_site
+    {join_clause}
+    WHERE {where_clause_preventif}
+    AND COALESCE(interventions.date_debut_intervention, interventions.date_creation_intervention) IS NOT NULL
+    GROUP BY mois, interventions.categorie
+    """
+    
+    # Requête pour autres catégories (utilise date_creation_intervention)
+    where_conditions_autres = where_conditions.copy()
+    where_conditions_autres.append("interventions.categorie != 'PREVENTIF'")
+    if annees:
+        annees_str = ','.join(map(str, annees))
+        where_conditions_autres.append(f"CAST(strftime('%Y', interventions.date_creation_intervention) AS INTEGER) IN ({annees_str})")
+    where_clause_autres = " AND ".join(where_conditions_autres)
+    
+    # Requête détaillée pour autres catégories avec comptage par zone
+    query_autres_detail = f"""
+    SELECT 
+        CAST(strftime('%m', interventions.date_creation_intervention) AS INTEGER) as mois,
+        interventions.categorie,
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        COUNT(*) as nb_interventions_zone
+    FROM interventions
+    {join_clause}
+    WHERE {where_clause_autres}
+    AND interventions.date_creation_intervention IS NOT NULL
+    GROUP BY mois, interventions.categorie, zone_mainteneur
+    """
+    
+    # Requête agrégée pour autres catégories
+    query_autres = f"""
+    SELECT 
+        CAST(strftime('%m', interventions.date_creation_intervention) AS INTEGER) as mois,
+        interventions.categorie,
+        COUNT(*) as nb_interventions
+    FROM interventions
+    {join_clause}
+    WHERE {where_clause_autres}
+    AND interventions.date_creation_intervention IS NOT NULL
+    GROUP BY mois, interventions.categorie
+    """
+    
+    # Exécuter les requêtes agrégées
+    df_preventif = load_data_from_db(query_preventif)
+    df_autres = load_data_from_db(query_autres)
+    
+    # Exécuter les requêtes détaillées pour les zones
+    df_preventif_detail = load_data_from_db(query_preventif_detail)
+    df_autres_detail = load_data_from_db(query_autres_detail)
+    
+    # Combiner les résultats agrégés
+    if df_preventif is not None and not df_preventif.empty:
+        if df_autres is not None and not df_autres.empty:
+            df = pd.concat([df_preventif, df_autres], ignore_index=True)
+        else:
+            df = df_preventif
+    elif df_autres is not None and not df_autres.empty:
+        df = df_autres
+    else:
+        return pd.DataFrame()
+    
+    # Combiner les données détaillées pour les tooltips
+    df_detail = pd.DataFrame()
+    if df_preventif_detail is not None and not df_preventif_detail.empty:
+        df_detail = pd.concat([df_detail, df_preventif_detail], ignore_index=True)
+    if df_autres_detail is not None and not df_autres_detail.empty:
+        df_detail = pd.concat([df_detail, df_autres_detail], ignore_index=True)
+    
+    # Si on a des données détaillées, les ajouter au DataFrame principal
+    if not df_detail.empty:
+        # Créer un dictionnaire pour stocker les zones par mois/catégorie
+        zones_dict = {}
+        for _, row in df_detail.iterrows():
+            key = (int(row['mois']), row['categorie'])
+            if key not in zones_dict:
+                zones_dict[key] = []
+            zones_dict[key].append(f"{row['zone_mainteneur']}:{int(row['nb_interventions_zone'])}")
+        
+        # Ajouter les zones au DataFrame principal
+        df['zones_list'] = df.apply(
+            lambda row: ','.join(zones_dict.get((int(row['mois']), row['categorie']), [])),
+            axis=1
+        )
+    else:
+        df['zones_list'] = ''
+    
+    # Trier par mois et catégorie
+    df = df.sort_values(['mois', 'categorie']).reset_index(drop=True)
+    
+    return df
+
+
+def get_interventions_par_site(annees=None, categories=None, zones=None, limit=20):
+    """Interventions par site avec filtres multiples"""
+    if annees is None:
+        annees = [2025]
+    if isinstance(annees, int):
+        annees = [annees]
+    if categories is None:
+        categories = []
+    if isinstance(categories, str):
+        categories = [categories]
+    if zones is None:
+        zones = []
+    if isinstance(zones, str):
+        zones = [zones]
+    
+    # Construire la clause WHERE avec filtres
+    where_conditions = []
+    
+    # Filtre années
+    if annees:
+        annees_str = ','.join(map(str, annees))
+        where_conditions.append(f"CAST(strftime('%Y', interventions.date_creation_intervention) AS INTEGER) IN ({annees_str})")
+    
+    # Filtre catégories
+    if categories:
+        categories_escaped = [c.replace("'", "''") for c in categories]
+        categories_list = "', '".join(categories_escaped)
+        where_conditions.append(f"interventions.categorie IN ('{categories_list}')")
+    
+    # Filtre zones (via jointure avec exposition via id_site)
+    join_clause = ""
+    if zones:
+        zones_escaped = [z.replace("'", "''") for z in zones]
+        zones_list = "', '".join(zones_escaped)
+        join_clause = """
+        JOIN exposition e ON interventions.id_site = e.id_site
+        """
+        where_conditions.append(f"e.zone_mainteneur IN ('{zones_list}')")
+    
+    where_conditions.append("interventions.nom_site IS NOT NULL")
+    where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+    
+    query = f"""
+    SELECT 
+        interventions.nom_site,
+        COUNT(*) as nb_interventions
+    FROM interventions
+    {join_clause}
+    WHERE {where_clause}
+    GROUP BY interventions.nom_site
     ORDER BY nb_interventions DESC
     LIMIT {limit}
     """
@@ -4308,6 +4612,321 @@ def get_interventions_par_spv(annee):
     """
     df = load_data_from_db(query)
     return df if df is not None and not df.empty else pd.DataFrame()
+
+
+def get_interventions_spv_et_sites_tableau(annee, annee_n1=None, limit_spv=10, limit_sites_per_spv=5):
+    """Récupère les interventions par SPV et sites pour tableau hiérarchique avec comparaison N-1
+    Retourne un DataFrame avec colonnes: spv, nom_site, nb_interventions, nb_interventions_n1
+    """
+    # Requête pour obtenir les totaux par SPV pour année courante
+    query_spv_totals = f"""
+    SELECT 
+        i.spv,
+        COUNT(*) as nb_interventions_total
+    FROM interventions i
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.spv IS NOT NULL
+    GROUP BY i.spv
+    ORDER BY nb_interventions_total DESC
+    LIMIT {limit_spv}
+    """
+    df_spv_totals = load_data_from_db(query_spv_totals)
+    if df_spv_totals is None or df_spv_totals.empty:
+        return pd.DataFrame()
+    
+    top_spvs = df_spv_totals['spv'].tolist()
+    spv_totals_dict = dict(zip(df_spv_totals['spv'], df_spv_totals['nb_interventions_total']))
+    
+    # Requête pour obtenir les totaux par SPV pour N-1 si fourni
+    spv_totals_n1_dict = {}
+    if annee_n1:
+        query_spv_totals_n1 = f"""
+        SELECT 
+            i.spv,
+            COUNT(*) as nb_interventions_total
+        FROM interventions i
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
+        AND i.spv IS NOT NULL
+        GROUP BY i.spv
+        """
+        df_spv_totals_n1 = load_data_from_db(query_spv_totals_n1)
+        if df_spv_totals_n1 is not None and not df_spv_totals_n1.empty:
+            spv_totals_n1_dict = dict(zip(df_spv_totals_n1['spv'], df_spv_totals_n1['nb_interventions_total']))
+    
+    # Requête pour obtenir les détails par site pour ces SPV (année courante)
+    result_data = []
+    if top_spvs:
+        spv_list_str = "', '".join([spv.replace("'", "''") for spv in top_spvs])
+        
+        # Année courante
+        query_sites = f"""
+        SELECT 
+            i.spv,
+            i.nom_site,
+            COUNT(*) as nb_interventions
+        FROM interventions i
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+        AND i.spv IN ('{spv_list_str}')
+        AND i.nom_site IS NOT NULL
+        GROUP BY i.spv, i.nom_site
+        ORDER BY i.spv, nb_interventions DESC
+        """
+        df_sites = load_data_from_db(query_sites)
+        if df_sites is None:
+            df_sites = pd.DataFrame()
+        
+        # Année N-1 si fournie
+        df_sites_n1 = pd.DataFrame()
+        if annee_n1:
+            query_sites_n1 = f"""
+            SELECT 
+                i.spv,
+                i.nom_site,
+                COUNT(*) as nb_interventions
+            FROM interventions i
+            WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
+            AND i.spv IN ('{spv_list_str}')
+            AND i.nom_site IS NOT NULL
+            GROUP BY i.spv, i.nom_site
+            ORDER BY i.spv, nb_interventions DESC
+            """
+            df_sites_n1 = load_data_from_db(query_sites_n1)
+            if df_sites_n1 is None:
+                df_sites_n1 = pd.DataFrame()
+    
+    # Construire le DataFrame hiérarchique
+    for spv in top_spvs:
+        total_spv = spv_totals_dict[spv]
+        total_spv_n1 = spv_totals_n1_dict.get(spv, 0)
+        
+        # Ajouter la ligne SPV (total)
+        result_data.append({
+            'spv': spv,
+            'site': None,
+            'nb_interventions': total_spv,
+            'nb_interventions_n1': total_spv_n1,
+            'is_spv_total': True
+        })
+        
+        # Ajouter les Top sites de ce SPV
+        if df_sites is not None and not df_sites.empty:
+            df_spv_sites = df_sites[df_sites['spv'] == spv].nlargest(limit_sites_per_spv, 'nb_interventions')
+            
+            for _, row in df_spv_sites.iterrows():
+                site_name = row['nom_site']
+                nb_interv = row['nb_interventions']
+                
+                # Récupérer le nombre d'interventions N-1 pour ce site si disponible
+                nb_interv_n1 = 0
+                if not df_sites_n1.empty:
+                    site_n1 = df_sites_n1[(df_sites_n1['spv'] == spv) & (df_sites_n1['nom_site'] == site_name)]
+                    if not site_n1.empty:
+                        nb_interv_n1 = int(site_n1.iloc[0]['nb_interventions'])
+                
+                result_data.append({
+                    'spv': spv,
+                    'site': site_name,
+                    'nb_interventions': nb_interv,
+                    'nb_interventions_n1': nb_interv_n1,
+                    'is_spv_total': False
+                })
+    
+    result_df = pd.DataFrame(result_data)
+    return result_df
+
+
+def get_interventions_curatives_par_severite(annee, annee_n1=None, spv_list=None, site_list=None):
+    """Récupère les interventions CURATIVES par SPV, site et sévérité avec comparaison N-1
+    Retourne un DataFrame avec colonnes: spv, nom_site, severite_categorie, nb_interventions, nb_interventions_n1
+    """
+    result_data = []
+    
+    # Construire les filtres
+    spv_filter = ""
+    site_filter = ""
+    if spv_list:
+        spv_list_str = "', '".join([spv.replace("'", "''") for spv in spv_list])
+        spv_filter = f"AND i.spv IN ('{spv_list_str}')"
+    
+    if site_list:
+        site_list_str = "', '".join([site.replace("'", "''") for site in site_list])
+        site_filter = f"AND i.nom_site IN ('{site_list_str}')"
+    
+    # Requête pour année courante
+    query = f"""
+    SELECT 
+        i.spv,
+        i.nom_site,
+        i.severite_categorie,
+        COUNT(*) as nb_interventions
+    FROM interventions i
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.categorie = 'CURATIVE'
+    AND i.spv IS NOT NULL
+    AND i.nom_site IS NOT NULL
+    AND i.severite_categorie IS NOT NULL
+    {spv_filter}
+    {site_filter}
+    GROUP BY i.spv, i.nom_site, i.severite_categorie
+    """
+    df_current = load_data_from_db(query)
+    if df_current is None:
+        df_current = pd.DataFrame()
+    
+    # Requête pour N-1 si fourni
+    df_n1 = pd.DataFrame()
+    if annee_n1:
+        query_n1 = f"""
+        SELECT 
+            i.spv,
+            i.nom_site,
+            i.severite_categorie,
+            COUNT(*) as nb_interventions
+        FROM interventions i
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
+        AND i.categorie = 'CURATIVE'
+        AND i.spv IS NOT NULL
+        AND i.nom_site IS NOT NULL
+        AND i.severite_categorie IS NOT NULL
+        {spv_filter}
+        {site_filter}
+        GROUP BY i.spv, i.nom_site, i.severite_categorie
+        """
+        df_n1 = load_data_from_db(query_n1)
+        if df_n1 is None:
+            df_n1 = pd.DataFrame()
+    
+    # Créer un dictionnaire pour N-1 pour accès rapide
+    n1_dict = {}
+    if not df_n1.empty:
+        for _, row in df_n1.iterrows():
+            key = (row['spv'], row['nom_site'], row['severite_categorie'])
+            n1_dict[key] = int(row['nb_interventions'])
+    
+    # Construire le DataFrame résultat
+    for _, row in df_current.iterrows():
+        key = (row['spv'], row['nom_site'], row['severite_categorie'])
+        nb_n1 = n1_dict.get(key, 0)
+        
+        result_data.append({
+            'spv': row['spv'],
+            'nom_site': row['nom_site'],
+            'severite_categorie': row['severite_categorie'],
+            'nb_interventions': int(row['nb_interventions']),
+            'nb_interventions_n1': nb_n1
+        })
+    
+    # Ajouter aussi les totaux par SPV (sans site)
+    if not df_current.empty:
+        df_spv_totals = df_current.groupby(['spv', 'severite_categorie'])['nb_interventions'].sum().reset_index()
+        if not df_n1.empty:
+            df_spv_totals_n1 = df_n1.groupby(['spv', 'severite_categorie'])['nb_interventions'].sum().reset_index()
+        else:
+            df_spv_totals_n1 = pd.DataFrame()
+        
+        n1_spv_dict = {}
+        if not df_spv_totals_n1.empty:
+            for _, row in df_spv_totals_n1.iterrows():
+                key = (row['spv'], row['severite_categorie'])
+                n1_spv_dict[key] = int(row['nb_interventions'])
+        
+        for _, row in df_spv_totals.iterrows():
+            key = (row['spv'], row['severite_categorie'])
+            nb_n1_spv = n1_spv_dict.get(key, 0)
+            
+            result_data.append({
+                'spv': row['spv'],
+                'nom_site': None,  # Total SPV
+                'severite_categorie': row['severite_categorie'],
+                'nb_interventions': int(row['nb_interventions']),
+                'nb_interventions_n1': nb_n1_spv
+            })
+    
+    result_df = pd.DataFrame(result_data)
+    return result_df
+
+
+def get_interventions_spv_et_sites(annee, limit_spv=10, limit_sites_per_spv=10):
+    """Récupère les interventions par SPV et sites pour graphique sunburst hiérarchique
+    Retourne un DataFrame avec colonnes: ids, labels, parents, values, values_real
+    Pour avoir des sites de largeur uniforme, on donne la même valeur à tous les sites d'un SPV
+    """
+    # Requête pour obtenir les totaux par SPV (toutes interventions, pas seulement celles avec sites)
+    query_spv_totals = f"""
+    SELECT 
+        i.spv,
+        COUNT(*) as nb_interventions_total
+    FROM interventions i
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.spv IS NOT NULL
+    GROUP BY i.spv
+    ORDER BY nb_interventions_total DESC
+    LIMIT {limit_spv}
+    """
+    df_spv_totals = load_data_from_db(query_spv_totals)
+    if df_spv_totals is None or df_spv_totals.empty:
+        return pd.DataFrame()
+    
+    top_spvs = df_spv_totals['spv'].tolist()
+    spv_totals_dict = dict(zip(df_spv_totals['spv'], df_spv_totals['nb_interventions_total']))
+    
+    # Requête pour obtenir les détails par site pour ces SPV
+    if top_spvs:
+        spv_list_str = "', '".join([spv.replace("'", "''") for spv in top_spvs])
+        query_sites = f"""
+        SELECT 
+            i.spv,
+            i.nom_site,
+            COUNT(*) as nb_interventions
+        FROM interventions i
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+        AND i.spv IN ('{spv_list_str}')
+        AND i.nom_site IS NOT NULL
+        GROUP BY i.spv, i.nom_site
+        ORDER BY i.spv, nb_interventions DESC
+        """
+        df_sites = load_data_from_db(query_sites)
+    else:
+        df_sites = pd.DataFrame()
+    
+    # Construire le DataFrame hiérarchique
+    result_data = []
+    
+    for spv in top_spvs:
+        total_spv = spv_totals_dict[spv]
+        
+        # Ajouter le total du SPV
+        result_data.append({
+            'ids': spv,
+            'labels': spv,
+            'parents': '',
+            'values': total_spv,
+            'values_real': total_spv
+        })
+        
+        # Ajouter les Top sites de ce SPV
+        if df_sites is not None and not df_sites.empty:
+            df_spv_sites = df_sites[df_sites['spv'] == spv].nlargest(limit_sites_per_spv, 'nb_interventions')
+            
+            # Pour avoir la même largeur angulaire pour tous les sites, on donne la même valeur
+            # On utilise 1 pour tous les sites, ou mieux, on divise le total SPV par le nombre de sites
+            nb_sites = len(df_spv_sites)
+            if nb_sites > 0:
+                # Valeur uniforme pour la largeur : diviser le total SPV par le nombre de sites
+                # Cela fait que tous les sites prennent la même largeur angulaire dans le SPV
+                uniform_value = total_spv / nb_sites if nb_sites > 0 else 1
+                
+                for _, row in df_spv_sites.iterrows():
+                    result_data.append({
+                        'ids': f"{spv}-{row['nom_site']}",
+                        'labels': f"{row['nom_site']} ({int(row['nb_interventions'])})",
+                        'parents': spv,
+                        'values': uniform_value,  # Valeur uniforme pour largeur égale
+                        'values_real': row['nb_interventions']  # Valeur réelle pour affichage
+                    })
+    
+    result_df = pd.DataFrame(result_data)
+    return result_df
 
 
 def get_mttr_par_categorie(annee):
@@ -4478,6 +5097,198 @@ def get_taux_resolution_mensuel(annee):
     return df if df is not None and not df.empty else pd.DataFrame()
 
 
+def get_taux_resolution_par_zone_severite(annee, annee_n1=None):
+    """Taux de résolution par zone de maintenance et sévérité (uniquement CURATIVE)
+    Retourne un DataFrame avec colonnes: zone_mainteneur, severite_categorie, taux_resolution, taux_resolution_n1, nb_total, nb_total_n1
+    Calcul: % où status_intervention IN ('closed', 'terminated', 'validated') OU ticket_resolu = 1
+    """
+    # Requête pour année courante (exclut "Non défini")
+    query = f"""
+    SELECT 
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        i.severite_categorie,
+        COUNT(CASE 
+            WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') OR i.ticket_resolu = 1 
+            THEN 1 
+        END) * 100.0 / COUNT(*) as taux_resolution,
+        COUNT(*) as nb_total
+    FROM interventions i
+    INNER JOIN exposition e ON i.id_site = e.id_site
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.severite_categorie IS NOT NULL
+    AND i.categorie = 'CURATIVE'
+    GROUP BY zone_mainteneur, i.severite_categorie
+    HAVING COUNT(*) > 0
+    ORDER BY zone_mainteneur, i.severite_categorie
+    """
+    df = load_data_from_db(query)
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Requête pour N-1 si fourni
+    if annee_n1:
+        query_n1 = f"""
+        SELECT 
+            COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+            i.severite_categorie,
+            COUNT(CASE 
+                WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') OR i.ticket_resolu = 1 
+                THEN 1 
+            END) * 100.0 / COUNT(*) as taux_resolution,
+            COUNT(*) as nb_total
+        FROM interventions i
+        INNER JOIN exposition e ON i.id_site = e.id_site
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
+        AND i.severite_categorie IS NOT NULL
+        AND i.categorie = 'CURATIVE'
+        GROUP BY zone_mainteneur, i.severite_categorie
+        HAVING COUNT(*) > 0
+        ORDER BY zone_mainteneur, i.severite_categorie
+        """
+        df_n1 = load_data_from_db(query_n1)
+        if df_n1 is not None and not df_n1.empty:
+            # Créer un dictionnaire pour N-1
+            n1_dict = {}
+            for _, row in df_n1.iterrows():
+                key = (row['zone_mainteneur'], row['severite_categorie'])
+                n1_dict[key] = {
+                    'taux_resolution': float(row['taux_resolution']),
+                    'nb_total': int(row['nb_total'])
+                }
+            
+            # Ajouter les valeurs N-1 au DataFrame
+            df['taux_resolution_n1'] = df.apply(
+                lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('taux_resolution', None),
+                axis=1
+            )
+            df['nb_total_n1'] = df.apply(
+                lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('nb_total', None),
+                axis=1
+            )
+        else:
+            df['taux_resolution_n1'] = None
+            df['nb_total_n1'] = None
+    else:
+        df['taux_resolution_n1'] = None
+        df['nb_total_n1'] = None
+    
+    return df
+
+
+def get_mttr_par_zone_severite(annee, annee_n1=None):
+    """MTTR moyen et médian par zone de maintenance et sévérité (uniquement CURATIVE)
+    Retourne un DataFrame avec colonnes: zone_mainteneur, severite_categorie, mttr_moyen_jours, mttr_median_jours, mttr_moyen_heures, mttr_moyen_n1, mttr_median_n1
+    Calcul: 
+    - Si status_intervention IN ('closed', 'terminated', 'validated') : date_fin_intervention - date_creation_intervention
+    - Si status_intervention IN ('open', 'assigned', 'accepted') : date du jour - date_creation_intervention
+    """
+    from datetime import datetime
+    
+    # Date actuelle pour les interventions ouvertes
+    date_actuelle = datetime.now()
+    
+    # Requête pour année courante (exclut "Non défini")
+    query = f"""
+    SELECT 
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        i.severite_categorie,
+        CASE 
+            WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') 
+            THEN JULIANDAY(i.date_fin_intervention) - JULIANDAY(i.date_creation_intervention)
+            WHEN LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted') 
+            THEN JULIANDAY('{date_actuelle.strftime("%Y-%m-%d")}') - JULIANDAY(i.date_creation_intervention)
+            ELSE NULL
+        END as mttr_jours
+    FROM interventions i
+    INNER JOIN exposition e ON i.id_site = e.id_site
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.severite_categorie IS NOT NULL
+    AND i.date_creation_intervention IS NOT NULL
+    AND i.categorie = 'CURATIVE'
+    AND (
+        (LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') AND i.date_fin_intervention IS NOT NULL)
+        OR LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted')
+    )
+    """
+    df_raw = load_data_from_db(query)
+    if df_raw is None or df_raw.empty:
+        df_result = pd.DataFrame()
+    else:
+        # Calculer moyenne ET médiane par zone et sévérité
+        df_result = df_raw.groupby(['zone_mainteneur', 'severite_categorie']).agg({
+            'mttr_jours': ['mean', 'median']
+        }).reset_index()
+        
+        df_result.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours']
+        df_result['mttr_moyen_heures'] = df_result['mttr_moyen_jours'] * 24
+        df_result = df_result.sort_values(['zone_mainteneur', 'severite_categorie'])
+    
+    # Requête pour N-1 si fourni
+    if annee_n1:
+        query_n1 = f"""
+        SELECT 
+            COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+            i.severite_categorie,
+            CASE 
+                WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') 
+                THEN JULIANDAY(i.date_fin_intervention) - JULIANDAY(i.date_creation_intervention)
+                WHEN LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted') 
+                THEN JULIANDAY('{date_actuelle.strftime("%Y-%m-%d")}') - JULIANDAY(i.date_creation_intervention)
+                ELSE NULL
+            END as mttr_jours
+        FROM interventions i
+        INNER JOIN exposition e ON i.id_site = e.id_site
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
+        AND i.severite_categorie IS NOT NULL
+        AND i.date_creation_intervention IS NOT NULL
+        AND i.categorie = 'CURATIVE'
+        AND (
+            (LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') AND i.date_fin_intervention IS NOT NULL)
+            OR LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted')
+        )
+        """
+        df_raw_n1 = load_data_from_db(query_n1)
+        if df_raw_n1 is not None and not df_raw_n1.empty:
+            # Calculer moyenne et médiane par zone et sévérité pour N-1
+            df_n1_agg = df_raw_n1.groupby(['zone_mainteneur', 'severite_categorie']).agg({
+                'mttr_jours': ['mean', 'median']
+            }).reset_index()
+            
+            df_n1_agg.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours']
+            
+            # Créer un dictionnaire pour N-1
+            n1_dict = {}
+            for _, row in df_n1_agg.iterrows():
+                key = (row['zone_mainteneur'], row['severite_categorie'])
+                n1_dict[key] = {
+                    'mttr_moyen': float(row['mttr_moyen_jours']),
+                    'mttr_median': float(row['mttr_median_jours'])
+                }
+            
+            # Ajouter les valeurs N-1 au DataFrame résultat
+            if not df_result.empty:
+                df_result['mttr_moyen_n1'] = df_result.apply(
+                    lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('mttr_moyen', None),
+                    axis=1
+                )
+                df_result['mttr_median_n1'] = df_result.apply(
+                    lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('mttr_median', None),
+                    axis=1
+                )
+            else:
+                df_result = pd.DataFrame(columns=['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours', 'mttr_moyen_heures', 'mttr_moyen_n1', 'mttr_median_n1'])
+        else:
+            if not df_result.empty:
+                df_result['mttr_moyen_n1'] = None
+                df_result['mttr_median_n1'] = None
+    else:
+        if not df_result.empty:
+            df_result['mttr_moyen_n1'] = None
+            df_result['mttr_median_n1'] = None
+    
+    return df_result
+
+
 def get_sla_cloture_detail(annee):
     """SLA Clôture détaillé : ≤7j et ≤30j"""
     query = f"""
@@ -4515,6 +5326,161 @@ def get_sla_cloture_global(annee):
     """
     df = load_data_from_db(query)
     return df if df is not None and not df.empty else pd.DataFrame()
+
+
+def calculate_business_days(start_date, end_date):
+    """Calcule le nombre de jours ouvrés entre deux dates (excluant weekends et jours fériés français)
+    Les jours fériés français sont : 1er Janvier, Lundi de Pâques, 1er Mai, 8 Mai, Ascension, Lundi de Pentecôte, 14 Juillet, 15 Août, 1er Novembre, 11 Novembre, 25 Décembre
+    """
+    from datetime import datetime, timedelta
+    
+    if isinstance(start_date, str):
+        start_date = datetime.strptime(start_date.split()[0], '%Y-%m-%d')
+    if isinstance(end_date, str):
+        end_date = datetime.strptime(end_date.split()[0], '%Y-%m-%d')
+    
+    # Jours fériés français (dates fixes)
+    def get_french_holidays(year):
+        holidays = []
+        holidays.append(datetime(year, 1, 1))   # Nouvel An
+        holidays.append(datetime(year, 5, 1))   # Fête du Travail
+        holidays.append(datetime(year, 5, 8))   # Victoire 1945
+        holidays.append(datetime(year, 7, 14))   # Fête Nationale
+        holidays.append(datetime(year, 8, 15))  # Assomption
+        holidays.append(datetime(year, 11, 1))  # Toussaint
+        holidays.append(datetime(year, 11, 11)) # Armistice
+        holidays.append(datetime(year, 12, 25))  # Noël
+        
+        # Calcul des jours fériés mobiles (approximation simple pour Pâques, Ascension, Pentecôte)
+        # Pâques : premier dimanche après la première pleine lune après le 21 mars
+        # Pour simplifier, on utilise une formule approchée
+        a = year % 19
+        b = year // 100
+        c = year % 100
+        d = (19 * a + b - b // 4 - ((b - (b + 8) // 25 + 1) // 3) + 15) % 30
+        e = (32 + 2 * (b % 4) + 2 * (c // 4) - d - (c % 4)) % 7
+        f = d + e - 7 * ((a + 11 * d + 22 * e) // 451) + 114
+        month = f // 31
+        day = (f % 31) + 1
+        
+        paques = datetime(year, month, day)
+        holidays.append(paques)  # Pâques
+        holidays.append(paques + timedelta(days=1))  # Lundi de Pâques
+        holidays.append(paques + timedelta(days=39))  # Ascension
+        holidays.append(paques + timedelta(days=50))  # Pentecôte
+        holidays.append(paques + timedelta(days=51))  # Lundi de Pentecôte
+        
+        return holidays
+    
+    # Calculer les jours ouvrés
+    current_date = start_date
+    business_days = 0
+    
+    # Obtenir les jours fériés pour les années concernées
+    all_holidays = []
+    for year in range(start_date.year, end_date.year + 1):
+        all_holidays.extend(get_french_holidays(year))
+    
+    while current_date <= end_date:
+        # Exclure weekends (samedi=5, dimanche=6)
+        if current_date.weekday() < 5:  # 0-4 = Lundi-Vendredi
+            # Exclure les jours fériés
+            if current_date.date() not in [h.date() for h in all_holidays]:
+                business_days += 1
+        current_date += timedelta(days=1)
+    
+    return business_days
+
+
+def get_sla_cloture_par_zone_severite(annee):
+    """SLA Clôture par zone de maintenance et sévérité (uniquement CURATIVE)
+    Utilise les jours ouvrés pour le calcul des délais
+    Objectifs par sévérité : Critical=3j, Normal=7j, Low=10j, Warning=20j
+    Retourne un DataFrame avec colonnes: zone_mainteneur, severite_categorie, nb_total, nb_respect_sla, sla_pct, objectif_jours
+    """
+    from datetime import datetime
+    
+    # Objectifs par sévérité
+    objectifs_severite = {
+        'Critical': 3,
+        'Normal': 7,
+        'Low': 10,
+        'Warning': 20
+    }
+    
+    date_actuelle = datetime.now()
+    
+    # Requête pour obtenir les données brutes
+    query = f"""
+    SELECT 
+        COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+        i.severite_categorie,
+        i.date_creation_intervention,
+        CASE 
+            WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') 
+            THEN i.date_fin_intervention
+            WHEN LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted') 
+            THEN '{date_actuelle.strftime("%Y-%m-%d")}'
+            ELSE NULL
+        END as date_fin_calculee
+    FROM interventions i
+    INNER JOIN exposition e ON i.id_site = e.id_site
+    WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+    AND i.categorie = 'CURATIVE'
+    AND i.severite_categorie IS NOT NULL
+    AND i.date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') AND i.date_fin_intervention IS NOT NULL)
+        OR LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted')
+    )
+    """
+    df_raw = load_data_from_db(query)
+    if df_raw is None or df_raw.empty:
+        return pd.DataFrame()
+    
+    # Calculer les jours ouvrés pour chaque intervention
+    result_data = []
+    
+    for _, row in df_raw.iterrows():
+        zone = row['zone_mainteneur']
+        severite = row['severite_categorie']
+        date_creation = row['date_creation_intervention']
+        date_fin = row['date_fin_calculee']
+        
+        if pd.notna(date_creation) and pd.notna(date_fin):
+            try:
+                jours_ouvres = calculate_business_days(date_creation, date_fin)
+                objectif = objectifs_severite.get(severite, 30)
+                respect_sla = 1 if jours_ouvres <= objectif else 0
+                
+                result_data.append({
+                    'zone_mainteneur': zone,
+                    'severite_categorie': severite,
+                    'jours_ouvres': jours_ouvres,
+                    'objectif_jours': objectif,
+                    'respect_sla': respect_sla
+                })
+            except Exception as e:
+                # Ignorer les erreurs de parsing de dates
+                continue
+    
+    if not result_data:
+        return pd.DataFrame()
+    
+    df_result = pd.DataFrame(result_data)
+    
+    # Calculer les totaux et pourcentages par zone et sévérité
+    df_agg = df_result.groupby(['zone_mainteneur', 'severite_categorie']).agg({
+        'respect_sla': ['count', 'sum']
+    }).reset_index()
+    
+    df_agg.columns = ['zone_mainteneur', 'severite_categorie', 'nb_total', 'nb_respect_sla']
+    df_agg['sla_pct'] = (df_agg['nb_respect_sla'] / df_agg['nb_total'] * 100).round(2)
+    
+    # Ajouter les objectifs
+    df_agg['objectif_jours'] = df_agg['severite_categorie'].map(objectifs_severite)
+    
+    return df_agg.sort_values(['zone_mainteneur', 'severite_categorie'])
 
 
 def get_disponibilite_mensuelle(annee):
@@ -4728,6 +5694,56 @@ def get_top_sites_curatif_par_mw(annee, limit=15):
     return df if df is not None and not df.empty else pd.DataFrame()
 
 
+# Fonctions helper pour la vue Maintenance
+@st.cache_data
+def get_annees_disponibles_maintenance():
+    """Récupère les années disponibles depuis les interventions"""
+    query = """
+    SELECT DISTINCT CAST(strftime('%Y', date_creation_intervention) AS INTEGER) as annee
+    FROM interventions
+    WHERE date_creation_intervention IS NOT NULL
+    ORDER BY annee DESC
+    """
+    df = load_data_from_db(query)
+    if df is not None and not df.empty:
+        return [int(row['annee']) for row in df.to_dict('records')]
+    return [2025, 2024, 2023]
+
+@st.cache_data
+def get_categories_disponibles_maintenance():
+    """Récupère les catégories disponibles depuis les interventions"""
+    query = """
+    SELECT DISTINCT categorie
+    FROM interventions
+    WHERE categorie IS NOT NULL
+    ORDER BY categorie
+    """
+    df = load_data_from_db(query)
+    if df is not None and not df.empty:
+        return [row['categorie'] for row in df.to_dict('records')]
+    return ['CURATIVE', 'PREVENTIF', 'NETTOYAGE', 'AUT', 'EXPL']
+
+@st.cache_data
+def get_zones_maintenance_disponibles():
+    """Récupère les zones de maintenance disponibles"""
+    try:
+        # Essayer de récupérer depuis la table exposition via jointure avec interventions
+        query = """
+        SELECT DISTINCT e.zone_mainteneur
+        FROM exposition e
+        JOIN interventions i ON e.id_site = i.id_site
+        WHERE e.zone_mainteneur IS NOT NULL
+        ORDER BY e.zone_mainteneur
+        """
+        df = load_data_from_db(query)
+        if df is not None and not df.empty:
+            return [row['zone_mainteneur'] for row in df.to_dict('records')]
+    except:
+        pass
+    # Valeurs par défaut si la colonne n'existe pas encore
+    return ['BayWa', 'MSP', 'ENER']
+
+
 def show_maintenance_view():
     """Affiche la vue Maintenance complète"""
     
@@ -4750,14 +5766,54 @@ def show_maintenance_view():
     </div>
     ''', unsafe_allow_html=True)
     
-    # Filtres
+    # Filtres avec sélection multiple
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 2rem;">', unsafe_allow_html=True)
-    col_filtre1, col_filtre2 = st.columns(2)
+    
+    annees_disponibles = get_annees_disponibles_maintenance()
+    categories_disponibles = get_categories_disponibles_maintenance()
+    zones_disponibles = get_zones_maintenance_disponibles()
+    
+    col_filtre1, col_filtre2, col_filtre3 = st.columns(3)
+    
     with col_filtre1:
-        annee_selectionnee = st.selectbox("Année", [2025, 2024, 2023], index=0, key="maintenance_annee")
+        annees_selectionnees = st.multiselect(
+            "Année(s)", 
+            annees_disponibles,
+            default=[annees_disponibles[0]] if annees_disponibles else [],
+            help="Sélectionnez une ou plusieurs années",
+            key="maintenance_annees"
+        )
+        # Si rien n'est sélectionné, utiliser toutes les années
+        if not annees_selectionnees:
+            annees_selectionnees = annees_disponibles
+    
     with col_filtre2:
-        categorie_selectionnee = st.selectbox("Catégorie", ['Toutes'] + ['CURATIVE', 'PREVENTIF', 'NETTOYAGE', 'AUT', 'EXPL'], index=0, key="maintenance_categorie")
+        categories_selectionnees = st.multiselect(
+            "Catégorie(s)",
+            categories_disponibles,
+            default=[],
+            help="Sélectionnez une ou plusieurs catégories (laisser vide pour toutes)",
+            key="maintenance_categories"
+        )
+        # Si rien n'est sélectionné, utiliser toutes les catégories
+        if not categories_selectionnees:
+            categories_selectionnees = categories_disponibles
+    
+    with col_filtre3:
+        zones_selectionnees = st.multiselect(
+            "Zone Maintenance",
+            zones_disponibles,
+            default=[],
+            help="Sélectionnez une ou plusieurs zones de maintenance (laisser vide pour toutes)",
+            key="maintenance_zones"
+        )
+        # Si rien n'est sélectionné, ne pas filtrer par zone (pas de jointure nécessaire)
+        # zones_selectionnees reste vide pour éviter la jointure inutile
+    
     st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Calculer l'année principale pour les fonctions qui nécessitent une année unique
+    annee_principale = annees_selectionnees[0] if annees_selectionnees else 2025
     
     # ============================================
     # SECTION A: Volume & Fréquence
@@ -4780,150 +5836,470 @@ def show_maintenance_view():
     
     # M.1 Chronologie Maintenance
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-    df_chrono = get_chronologie_maintenance(annee_selectionnee)
-    df_dispo = get_disponibilite_mensuelle(annee_selectionnee)
+    df_chrono = get_chronologie_maintenance(annees_selectionnees, categories_selectionnees, zones_selectionnees)
+    # Pour disponibilité, on prend la première année sélectionnée (ou toutes si plusieurs)
+    annee_principale = annees_selectionnees[0] if annees_selectionnees else 2025
+    df_dispo = get_disponibilite_mensuelle(annee_principale)
     
     if not df_chrono.empty:
-        fig = go.Figure()
+        # Créer un DataFrame avec tous les mois (1-12) pour s'assurer qu'ils sont tous présents
+        mois_complets = pd.DataFrame({'mois': range(1, 13)})
         
-        # Catégories principales
+        # Fonction helper pour créer les tooltips avec données par zone
+        def create_hovertemplate(cat, mois_val, nb_total, zones_list_str):
+            zones_info = ""
+            if zones_list_str and pd.notna(zones_list_str) and zones_list_str != "" and str(zones_list_str).strip():
+                # Format: "Zone1:5,Zone2:3" (zone:nombre)
+                zones_parts = [z.strip() for z in str(zones_list_str).split(',') if z.strip() and ':' in z]
+                if zones_parts:
+                    zones_info = "<br>".join([f"  • {part}" for part in zones_parts])
+            
+            tooltip = f"<b>{cat}</b><br>"
+            tooltip += f"Mois: {mois_val}<br>"
+            tooltip += f"<b>Total: {int(nb_total)} interventions</b>"
+            if zones_info:
+                tooltip += f"<br><br><b>Par Zone:</b><br>{zones_info}"
+            tooltip += "<extra></extra>"
+            return tooltip
+        
+        # Catégories principales avec leurs couleurs
         categories = ['CURATIVE', 'PREVENTIF', 'NETTOYAGE']
         colors = {'CURATIVE': '#ef4444', 'PREVENTIF': '#f59e0b', 'NETTOYAGE': '#0A84FF'}
         
-        for cat in categories:
-            df_cat = df_chrono[df_chrono['categorie'] == cat]
-            if not df_cat.empty:
-                fig.add_trace(go.Bar(
-                    name=cat,
-                    x=df_cat['mois'],
-                    y=df_cat['nb_interventions'],
-                    marker_color=colors.get(cat, '#6b7280')
+        # Section comparaison N-1 (année précédente) - graphique unique
+        if annee_principale and annee_principale > 2023:
+            annee_n1 = annee_principale - 1
+            df_chrono_n1 = get_chronologie_maintenance([annee_n1], categories_selectionnees, zones_selectionnees)
+            df_dispo_n1 = get_disponibilite_mensuelle(annee_n1)
+            
+            # Créer le graphique comparatif (année courante vs N-1)
+            fig_compare = go.Figure()
+            
+            # Ajouter les tooltips avec données par zone pour l'année courante
+            for cat in categories:
+                if cat in df_chrono['categorie'].values:
+                    df_cat = df_chrono[df_chrono['categorie'] == cat].copy()
+                    df_cat = mois_complets.merge(df_cat, on='mois', how='left')
+                    df_cat['nb_interventions'] = df_cat['nb_interventions'].fillna(0)
+                    df_cat['zones_list'] = df_cat['zones_list'].fillna('')
+                    
+                    # Créer les tooltips
+                    hover_templates = []
+                    for _, row in df_cat.iterrows():
+                        zones_str = str(row.get('zones_list', '')) if pd.notna(row.get('zones_list', '')) else ''
+                        hover_templates.append(create_hovertemplate(f'{cat} {annee_principale}', int(row['mois']), int(row['nb_interventions']), zones_str))
+                    
+                    fig_compare.add_trace(go.Bar(
+                        name=f'{cat} {annee_principale}',
+                        x=df_cat['mois'],
+                        y=df_cat['nb_interventions'],
+                        marker_color=colors.get(cat, '#6b7280'),
+                        opacity=0.8,
+                        customdata=hover_templates,
+                        hovertemplate='%{customdata}<extra></extra>'
+                    ))
+                
+                if not df_chrono_n1.empty and cat in df_chrono_n1['categorie'].values:
+                    df_cat_n1 = df_chrono_n1[df_chrono_n1['categorie'] == cat].copy()
+                    df_cat_n1 = mois_complets.merge(df_cat_n1, on='mois', how='left')
+                    df_cat_n1['nb_interventions'] = df_cat_n1['nb_interventions'].fillna(0)
+                    df_cat_n1['zones_list'] = df_cat_n1['zones_list'].fillna('')
+                    
+                    # Créer les tooltips pour N-1
+                    hover_templates_n1 = []
+                    for _, row in df_cat_n1.iterrows():
+                        zones_str = str(row.get('zones_list', '')) if pd.notna(row.get('zones_list', '')) else ''
+                        hover_templates_n1.append(create_hovertemplate(f'{cat} {annee_n1}', int(row['mois']), int(row['nb_interventions']), zones_str))
+                    
+                    fig_compare.add_trace(go.Bar(
+                        name=f'{cat} {annee_n1}',
+                        x=df_cat_n1['mois'],
+                        y=df_cat_n1['nb_interventions'],
+                        marker_color=colors.get(cat, '#6b7280'),
+                        opacity=0.4,
+                        marker_pattern_shape='/',
+                        customdata=hover_templates_n1,
+                        hovertemplate='%{customdata}<extra></extra>'
+                    ))
+            
+            # Lignes de disponibilité pour les deux années (axe secondaire)
+            if not df_dispo.empty:
+                fig_compare.add_trace(go.Scatter(
+                    name=f'Disponibilité {annee_principale}',
+                    x=df_dispo['mois'],
+                    y=df_dispo['dispo_moyenne'],
+                    mode='lines+markers',
+                    line=dict(color='#10b981', width=3, dash='solid'),
+                    yaxis='y2'
                 ))
-        
-        # Autres catégories
-        autres_cats = df_chrono[~df_chrono['categorie'].isin(categories)]
-        if not autres_cats.empty:
-            autres_par_mois = autres_cats.groupby('mois')['nb_interventions'].sum().reset_index()
-            fig.add_trace(go.Bar(
-                name='Autres',
-                x=autres_par_mois['mois'],
-                y=autres_par_mois['nb_interventions'],
-                marker_color='#6b7280'
-            ))
-        
-        # Ligne disponibilité (axe secondaire)
-        if not df_dispo.empty:
-            fig.add_trace(go.Scatter(
-                name='Disponibilité (%)',
-                x=df_dispo['mois'],
-                y=df_dispo['dispo_moyenne'],
-                mode='lines+markers',
-                line=dict(color='#10b981', width=3, dash='dash'),
-                yaxis='y2'
-            ))
-        
-        fig.update_layout(
-            title='📅 Chronologie Maintenance',
-            xaxis_title='Mois',
-            yaxis_title='Nombre d\'interventions',
-            yaxis2=dict(title='Disponibilité (%)', overlaying='y', side='right', range=[0, 100]),
-            barmode='stack',
-            height=450
-        )
-        fig = apply_glassmorphism_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
+            
+            if not df_dispo_n1.empty:
+                fig_compare.add_trace(go.Scatter(
+                    name=f'Disponibilité {annee_n1}',
+                    x=df_dispo_n1['mois'],
+                    y=df_dispo_n1['dispo_moyenne'],
+                    mode='lines+markers',
+                    line=dict(color='#10b981', width=2, dash='dash'),
+                    yaxis='y2'
+                ))
+            
+            fig_compare.update_layout(
+                title=f'📊 Comparaison {annee_principale} vs {annee_n1} (N-1)',
+                xaxis_title='Mois',
+                yaxis_title='Nombre d\'interventions',
+                yaxis2=dict(title='Disponibilité (%)', overlaying='y', side='right', range=[0, 100]),
+                barmode='group',
+                height=450,
+                hovermode='x unified'
+            )
+            fig_compare = apply_glassmorphism_theme(fig_compare)
+            st.plotly_chart(fig_compare, use_container_width=True)
+        else:
+            st.info(f"Comparaison N-1 non disponible (année minimale: 2024)")
     else:
         st.info("Aucune donnée disponible")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # M.2 & M.3 : Répartition et Interventions par Site
-    col_m2, col_m3 = st.columns(2)
+    # Disposition : Treemaps côte à côte
+    col_cat, col_sev = st.columns([1, 1])
     
-    with col_m2:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_repart = get_repartition_interventions()
+    with col_cat:
+        # M.2 : Interventions par Catégorie (Treemap)
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+        df_repart = get_repartition_interventions(annees_selectionnees, categories_selectionnees, zones_selectionnees)
+        df_repart_zones = get_repartition_interventions_par_zone(annees_selectionnees, categories_selectionnees, zones_selectionnees)
+        
+        # Récupérer les données N-1 si année > 2023
+        df_repart_n1 = pd.DataFrame()
+        if annee_principale and annee_principale > 2023:
+            annee_n1 = annee_principale - 1
+            df_repart_n1 = get_repartition_interventions([annee_n1], categories_selectionnees, zones_selectionnees)
+        
         if not df_repart.empty:
-            fig = px.pie(
-                df_repart,
-                values='nb',
-                names='categorie',
+            # Trier le DataFrame par nb décroissant pour s'assurer que les plus grandes valeurs sont en premier
+            df_repart = df_repart.sort_values('nb', ascending=False).reset_index(drop=True)
+            
+            # Créer les textes personnalisés pour chaque catégorie (en respectant l'ordre trié)
+            custom_texts = []
+            for _, row in df_repart.iterrows():
+                cat = row['categorie']
+                total = int(row['nb'])
+                
+                # Récupérer le total N-1 pour cette catégorie
+                total_n1 = ""
+                if not df_repart_n1.empty:
+                    cat_n1 = df_repart_n1[df_repart_n1['categorie'] == cat]
+                    if not cat_n1.empty:
+                        total_n1_val = int(cat_n1.iloc[0]['nb'])
+                        total_n1 = f"<br>N-1 ({annee_n1}): {total_n1_val}"
+                
+                # Récupérer les données par zone pour cette catégorie
+                zones_info = ""
+                if not df_repart_zones.empty:
+                    zones_cat = df_repart_zones[df_repart_zones['categorie'] == cat]
+                    if not zones_cat.empty:
+                        zones_list = []
+                        for _, zone_row in zones_cat.iterrows():
+                            zones_list.append(f"{zone_row['zone_mainteneur']}: {int(zone_row['nb_interventions_zone'])}")
+                        zones_info = "<br>".join(zones_list)
+                
+                # Texte pour le rectangle treemap avec police plus grande
+                text = f"<b>{cat}</b><br><b>Total: {total}</b>{total_n1}"
+                if zones_info:
+                    text += f"<br><br>Zones:<br>{zones_info}"
+                custom_texts.append(text)
+            
+            # Définir les couleurs personnalisées par catégorie
+            color_map_categories = {
+                'CURATIVE': '#10b981',    # Vert
+                'PREVENTIF': '#3b82f6',   # Bleu
+                'NETTOYAGE': '#f59e0b',   # Orange (conservé)
+                'AUT': '#6b7280',        # Gris (conservé)
+                'RCPT': '#8b5cf6',        # Violet (conservé)
+                'EXPL': '#ec4899',        # Rose (conservé)
+                'REGLEMENTAIRE': '#14b8a6', # Teal (conservé)
+                'CONS': '#f97316',        # Orange foncé (conservé)
+                'THERMO': '#6366f1',      # Indigo (conservé)
+                'BATT': '#84cc16'         # Vert lime (conservé)
+            }
+            
+            # Créer le treemap en utilisant directement go.Figure pour plus de contrôle sur les valeurs
+            fig = go.Figure()
+            
+            # Créer la trace treemap manuellement pour s'assurer que les valeurs sont correctement utilisées
+            fig.add_trace(go.Treemap(
+                labels=df_repart['categorie'].tolist(),
+                parents=[''] * len(df_repart),
+                values=df_repart['nb'].tolist(),  # Les valeurs déterminent la taille
+                text=custom_texts,
+                textinfo='text',
+                textfont=dict(size=16, family='Arial, sans-serif'),
+                marker=dict(
+                    colors=[color_map_categories.get(cat, '#6b7280') for cat in df_repart['categorie']],
+                    line=dict(width=2, color='white')
+                ),
+                hovertemplate='<b>%{label}</b><br>Interventions: %{value}<extra></extra>'
+            ))
+            
+            fig.update_layout(
                 title='🔧 Interventions par Catégorie',
-                color_discrete_sequence=px.colors.qualitative.Set3
+                height=500,
+                margin=dict(l=0, r=0, t=40, b=0)
             )
+            
             fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Aucune donnée disponible")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    with col_m3:
+    with col_sev:
+        # M.5 : Interventions par Sévérité (Treemap)
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_sites_interv = get_interventions_par_site(annee_selectionnee)
-        if not df_sites_interv.empty:
-            fig = px.bar(
-                df_sites_interv.head(15),
-                x='nb_interventions',
-                y='nom_site',
-                orientation='h',
-                title='🏢 Interventions par Site (Top 15)',
-                labels={'nb_interventions': 'Nombre', 'nom_site': 'Site'},
-                color='nb_interventions',
-                color_continuous_scale='Blues'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # M.5 & M.6 : Sévérité et SPV
-    col_m5, col_m6 = st.columns(2)
-    
-    with col_m5:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_severite = get_interventions_par_severite(annee_selectionnee)
+        df_severite = get_interventions_par_severite(annee_principale)
+        df_severite_zones = get_interventions_severite_par_zone(annee_principale)
+        
+        # Récupérer les données N-1 si année > 2023
+        df_severite_n1_agg = pd.DataFrame()
+        if annee_principale and annee_principale > 2023:
+            annee_n1 = annee_principale - 1
+            df_severite_n1 = get_interventions_par_severite(annee_n1)
+            if not df_severite_n1.empty:
+                df_severite_n1_agg = df_severite_n1.groupby('severite_categorie')['nb_interventions'].sum().reset_index()
+                df_severite_n1_agg.columns = ['severite_categorie', 'nb']
+        
         if not df_severite.empty:
-            fig = px.bar(
-                df_severite,
-                x='mois',
-                y='nb_interventions',
-                color='severite_categorie',
+            # Agréger par sévérité (somme sur tous les mois)
+            df_severite_agg = df_severite.groupby('severite_categorie')['nb_interventions'].sum().reset_index()
+            df_severite_agg.columns = ['severite_categorie', 'nb']
+            
+            # Trier le DataFrame par nb décroissant pour s'assurer que les plus grandes valeurs sont en premier
+            df_severite_agg = df_severite_agg.sort_values('nb', ascending=False).reset_index(drop=True)
+            
+            # Créer les textes personnalisés pour chaque sévérité (en respectant l'ordre trié)
+            custom_texts = []
+            for _, row in df_severite_agg.iterrows():
+                sev = row['severite_categorie']
+                total = int(row['nb'])
+                
+                # Récupérer le total N-1 pour cette sévérité
+                total_n1 = ""
+                if not df_severite_n1_agg.empty:
+                    sev_n1 = df_severite_n1_agg[df_severite_n1_agg['severite_categorie'] == sev]
+                    if not sev_n1.empty:
+                        total_n1_val = int(sev_n1.iloc[0]['nb'])
+                        total_n1 = f"<br>N-1 ({annee_n1}): {total_n1_val}"
+                
+                # Récupérer les données par zone pour cette sévérité
+                zones_info = ""
+                if not df_severite_zones.empty:
+                    zones_sev = df_severite_zones[df_severite_zones['severite_categorie'] == sev]
+                    if not zones_sev.empty:
+                        zones_list = []
+                        for _, zone_row in zones_sev.iterrows():
+                            zones_list.append(f"{zone_row['zone_mainteneur']}: {int(zone_row['nb_interventions_zone'])}")
+                        zones_info = "<br>".join(zones_list)
+                
+                # Texte pour le rectangle treemap avec police plus grande
+                text = f"<b>{sev}</b><br><b>Total: {total}</b>{total_n1}"
+                if zones_info:
+                    text += f"<br><br>Zones:<br>{zones_info}"
+                custom_texts.append(text)
+            
+            # Définir les couleurs personnalisées par sévérité
+            color_map_severite = {
+                'Critical': '#ef4444',    # Rouge
+                'Normal': '#f59e0b',      # Orange
+                'Low': '#3b82f6',         # Bleu
+                'Warning': '#10b981'      # Vert
+            }
+            
+            # Créer le treemap en utilisant directement go.Figure pour plus de contrôle sur les valeurs
+            fig = go.Figure()
+            
+            # Créer la trace treemap manuellement pour s'assurer que les valeurs sont correctement utilisées
+            fig.add_trace(go.Treemap(
+                labels=df_severite_agg['severite_categorie'].tolist(),
+                parents=[''] * len(df_severite_agg),
+                values=df_severite_agg['nb'].tolist(),  # Les valeurs déterminent la taille
+                text=custom_texts,
+                textinfo='text',
+                textfont=dict(size=16, family='Arial, sans-serif'),
+                marker=dict(
+                    colors=[color_map_severite.get(sev, '#6b7280') for sev in df_severite_agg['severite_categorie']],
+                    line=dict(width=2, color='white')
+                ),
+                hovertemplate='<b>%{label}</b><br>Interventions: %{value}<extra></extra>'
+            ))
+            
+            fig.update_layout(
                 title='⚠️ Interventions par Sévérité',
-                labels={'mois': 'Mois', 'nb_interventions': 'Nombre', 'severite_categorie': 'Sévérité'},
-                barmode='stack'
+                height=500,
+                margin=dict(l=0, r=0, t=40, b=0)
             )
+            
             fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Aucune donnée disponible")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    with col_m6:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_spv_interv = get_interventions_par_spv(annee_selectionnee)
-        if not df_spv_interv.empty:
-            fig = px.bar(
-                df_spv_interv.head(15),
-                x='spv',
-                y='nb_interventions',
-                title='🏢 Interventions par SPV (Top 15)',
-                labels={'spv': 'SPV', 'nb_interventions': 'Nombre'},
-                color='nb_interventions',
-                color_continuous_scale='Viridis',
-                text='nb_interventions'
-            )
-            fig.update_traces(texttemplate='%{text}', textposition='outside')
-            fig.update_layout(xaxis=dict(tickangle=-45), height=350, showlegend=False)
-            fig = apply_glassmorphism_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
+    # Section en dessous : Grille de tableaux SPV (2x4)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">🏢 Interventions par SPV (Top 8) et Sites (Top 5)</h3>', unsafe_allow_html=True)
+    
+    # Récupérer l'année N-1
+    annee_n1 = None
+    if annee_principale and annee_principale > 2023:
+        annee_n1 = annee_principale - 1
+    
+    df_spv_sites_all = get_interventions_spv_et_sites_tableau(annee_principale, annee_n1, limit_spv=8, limit_sites_per_spv=5)
+    
+    # Récupérer les données CURATIVES par sévérité pour tous les SPV et sites
+    df_curatives_severite = get_interventions_curatives_par_severite(annee_principale, annee_n1)
+    
+    if not df_spv_sites_all.empty:
+        # Extraire la liste des SPV uniques (lignes avec is_spv_total = True)
+        spv_list = df_spv_sites_all[df_spv_sites_all['is_spv_total'] == True]['spv'].unique().tolist()
+        
+        # Créer une grille 2x4 (2 colonnes, 4 lignes)
+        for row_idx in range(0, len(spv_list), 2):
+            cols_grid = st.columns(2)
+            
+            for col_idx in range(2):
+                spv_idx = row_idx + col_idx
+                if spv_idx < len(spv_list):
+                    spv_name = spv_list[spv_idx]
+                    
+                    # Filtrer les données pour ce SPV uniquement
+                    df_single_spv = df_spv_sites_all[df_spv_sites_all['spv'] == spv_name].copy()
+                    
+                    with cols_grid[col_idx]:
+                        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+                        st.markdown(f'<h4 style="color: #1f2937; margin-bottom: 0.5rem;">{spv_name}</h4>', unsafe_allow_html=True)
+                        
+                        # Liste des sévérités
+                        severites = ['Critical', 'Normal', 'Low', 'Warning']
+                        
+                        # Générer le tableau HTML pour ce SPV
+                        html_table = '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">'
+                        html_table += '<thead><tr style="background: rgba(15, 23, 42, 0.8); color: white; font-weight: 600;">'
+                        html_table += '<th style="padding: 8px; text-align: left; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Site</th>'
+                        html_table += f'<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Interventions<br>{annee_principale} | N-1</th>'
+                        html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Évolution</th>'
+                        html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(239, 68, 68, 0.3);">Critical<br>CURATIVE</th>'
+                        html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(245, 158, 11, 0.3);">Normal<br>CURATIVE</th>'
+                        html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(59, 130, 246, 0.3);">Low<br>CURATIVE</th>'
+                        html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(16, 185, 129, 0.3);">Warning<br>CURATIVE</th>'
+                        html_table += '</tr></thead><tbody>'
+                        
+                        # Ligne total SPV
+                        spv_row = df_single_spv[df_single_spv['is_spv_total'] == True].iloc[0]
+                        nb_2025_spv = int(spv_row['nb_interventions'])
+                        nb_n1_spv = int(spv_row['nb_interventions_n1']) if pd.notna(spv_row['nb_interventions_n1']) else 0
+                        
+                        evolution_spv = ""
+                        if nb_n1_spv > 0:
+                            diff_spv = nb_2025_spv - nb_n1_spv
+                            pct_change_spv = (diff_spv / nb_n1_spv * 100) if nb_n1_spv > 0 else 0
+                            if diff_spv > 0:
+                                evolution_spv = f'<span style="color: #ef4444;">+{diff_spv} (+{pct_change_spv:.1f}%)</span>'
+                            elif diff_spv < 0:
+                                evolution_spv = f'<span style="color: #10b981;">{diff_spv} ({pct_change_spv:.1f}%)</span>'
+                            else:
+                                evolution_spv = '<span style="color: #6b7280;">=</span>'
+                        else:
+                            evolution_spv = '<span style="color: #9ca3af;">N/A</span>'
+                        
+                        # Récupérer les données CURATIVES par sévérité pour ce SPV (total)
+                        severite_data = {}
+                        if not df_curatives_severite.empty:
+                            df_spv_curatives = df_curatives_severite[(df_curatives_severite['spv'] == spv_name) & (df_curatives_severite['nom_site'].isna())]
+                            for sev in severites:
+                                sev_row = df_spv_curatives[df_spv_curatives['severite_categorie'] == sev]
+                                if not sev_row.empty:
+                                    severite_data[sev] = {
+                                        'nb_2025': int(sev_row.iloc[0]['nb_interventions']),
+                                        'nb_n1': int(sev_row.iloc[0]['nb_interventions_n1']) if pd.notna(sev_row.iloc[0]['nb_interventions_n1']) else 0
+                                    }
+                                else:
+                                    severite_data[sev] = {'nb_2025': 0, 'nb_n1': 0}
+                        
+                        html_table += f'<tr style="background: rgba(59, 130, 246, 0.15); font-weight: 600;">'
+                        html_table += '<td style="padding: 8px; border: 1px solid rgba(0,0,0,0.1);"><i>Total SPV</i></td>'
+                        html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);"><b>{nb_2025_spv}</b>'
+                        if nb_n1_spv > 0:
+                            html_table += f' | {nb_n1_spv}'
+                        html_table += '</td>'
+                        html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{evolution_spv}</td>'
+                        
+                        # Ajouter les 4 colonnes de sévérité CURATIVE
+                        for sev in severites:
+                            sev_info = severite_data.get(sev, {'nb_2025': 0, 'nb_n1': 0})
+                            html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{sev_info["nb_2025"]}'
+                            if sev_info['nb_n1'] > 0:
+                                html_table += f' | {sev_info["nb_n1"]}'
+                            html_table += '</td>'
+                        
+                        html_table += '</tr>'
+                        
+                        # Lignes sites
+                        sites_rows = df_single_spv[df_single_spv['is_spv_total'] == False]
+                        for _, site_row in sites_rows.iterrows():
+                            site_name = site_row['site']
+                            nb_2025_site = int(site_row['nb_interventions'])
+                            nb_n1_site = int(site_row['nb_interventions_n1']) if pd.notna(site_row['nb_interventions_n1']) else 0
+                            
+                            evolution_site = ""
+                            if nb_n1_site > 0:
+                                diff_site = nb_2025_site - nb_n1_site
+                                pct_change_site = (diff_site / nb_n1_site * 100) if nb_n1_site > 0 else 0
+                                if diff_site > 0:
+                                    evolution_site = f'<span style="color: #ef4444;">+{diff_site} (+{pct_change_site:.1f}%)</span>'
+                                elif diff_site < 0:
+                                    evolution_site = f'<span style="color: #10b981;">{diff_site} ({pct_change_site:.1f}%)</span>'
+                                else:
+                                    evolution_site = '<span style="color: #6b7280;">=</span>'
+                            else:
+                                evolution_site = '<span style="color: #9ca3af;">N/A</span>'
+                            
+                            # Récupérer les données CURATIVES par sévérité pour ce site
+                            site_severite_data = {}
+                            if not df_curatives_severite.empty:
+                                df_site_curatives = df_curatives_severite[(df_curatives_severite['spv'] == spv_name) & (df_curatives_severite['nom_site'] == site_name)]
+                                for sev in severites:
+                                    sev_row = df_site_curatives[df_site_curatives['severite_categorie'] == sev]
+                                    if not sev_row.empty:
+                                        site_severite_data[sev] = {
+                                            'nb_2025': int(sev_row.iloc[0]['nb_interventions']),
+                                            'nb_n1': int(sev_row.iloc[0]['nb_interventions_n1']) if pd.notna(sev_row.iloc[0]['nb_interventions_n1']) else 0
+                                        }
+                                    else:
+                                        site_severite_data[sev] = {'nb_2025': 0, 'nb_n1': 0}
+                            
+                            html_table += '<tr style="background: rgba(255, 255, 255, 0.7);">'
+                            html_table += f'<td style="padding: 8px; border: 1px solid rgba(0,0,0,0.1);">{site_name}</td>'
+                            html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{nb_2025_site}'
+                            if nb_n1_site > 0:
+                                html_table += f' | {nb_n1_site}'
+                            html_table += '</td>'
+                            html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{evolution_site}</td>'
+                            
+                            # Ajouter les 4 colonnes de sévérité CURATIVE pour ce site
+                            for sev in severites:
+                                sev_info = site_severite_data.get(sev, {'nb_2025': 0, 'nb_n1': 0})
+                                html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{sev_info["nb_2025"]}'
+                                if sev_info['nb_n1'] > 0:
+                                    html_table += f' | {sev_info["nb_n1"]}'
+                                html_table += '</td>'
+                            
+                            html_table += '</tr>'
+                        
+                        html_table += '</tbody></table>'
+                        st.markdown(html_table, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Aucune donnée SPV disponible")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -4951,195 +6327,263 @@ def show_maintenance_view():
     
     with col_m9:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_taux_res = get_taux_resolution_mensuel(annee_selectionnee)
-        taux_res_global = get_kpi_taux_resolution(annee_selectionnee)
+        st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">✅ Taux de Résolution (CURATIVE uniquement)</h3>', unsafe_allow_html=True)
         
-        if not df_taux_res.empty:
-            fig = px.bar(
-                df_taux_res,
-                x='mois',
-                y='taux_resolution',
-                title=f'✅ Taux de Résolution (Moyen: {taux_res_global:.1f}%)',
-                labels={'mois': 'Mois', 'taux_resolution': 'Taux (%)'},
-                color='taux_resolution',
-                color_continuous_scale=['#ef4444', '#f59e0b', '#10b981'],
-                color_continuous_midpoint=95
-            )
-            fig.add_hline(y=95, line_dash="dash", line_color="green", annotation_text="Target 95%")
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+        # Récupérer l'année N-1
+        annee_n1 = None
+        if annee_principale and annee_principale > 2023:
+            annee_n1 = annee_principale - 1
+        
+        df_taux_zone_sev = get_taux_resolution_par_zone_severite(annee_principale, annee_n1)
+        
+        if not df_taux_zone_sev.empty:
+            # Créer une matrice Zone x Sévérité
+            severites = ['Critical', 'Normal', 'Low', 'Warning']
+            zones = sorted(df_taux_zone_sev['zone_mainteneur'].unique())
+            
+            # Créer le tableau HTML
+            html_table = '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">'
+            html_table += '<thead><tr style="background: rgba(15, 23, 42, 0.8); color: white; font-weight: 600;">'
+            html_table += '<th style="padding: 10px; text-align: left; border: 1px solid rgba(0,0,0,0.1);">Zone Maintenance</th>'
+            for sev in severites:
+                html_table += f'<th style="padding: 10px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{sev}</th>'
+            html_table += '</tr></thead><tbody>'
+            
+            for zone in zones:
+                html_table += '<tr style="background: rgba(255, 255, 255, 0.7);">'
+                html_table += f'<td style="padding: 8px; border: 1px solid rgba(0,0,0,0.1); font-weight: 500;">{zone}</td>'
+                
+                for sev in severites:
+                    row = df_taux_zone_sev[(df_taux_zone_sev['zone_mainteneur'] == zone) & 
+                                          (df_taux_zone_sev['severite_categorie'] == sev)]
+                    if not row.empty:
+                        taux = float(row.iloc[0]['taux_resolution'])
+                        nb_total = int(row.iloc[0]['nb_total'])
+                        taux_n1 = row.iloc[0].get('taux_resolution_n1')
+                        nb_total_n1 = row.iloc[0].get('nb_total_n1')
+                        
+                        # Couleur selon le taux (rouge < 80%, orange 80-95%, vert >= 95%)
+                        if taux >= 95:
+                            color = '#10b981'
+                        elif taux >= 80:
+                            color = '#f59e0b'
+                        else:
+                            color = '#ef4444'
+                        
+                        # Construire le texte avec N-1
+                        texte_cellule = f'{taux:.1f}%'
+                        if taux_n1 is not None and not pd.isna(taux_n1):
+                            texte_cellule += f'<br><span style="font-size: 11px; color: #6b7280;">N-1: {float(taux_n1):.1f}%</span>'
+                        texte_cellule += f'<br><span style="font-size: 10px; color: #6b7280; font-weight: normal;">(n={nb_total}'
+                        if nb_total_n1 is not None and not pd.isna(nb_total_n1):
+                            texte_cellule += f' | {int(nb_total_n1)})'
+                        else:
+                            texte_cellule += ')'
+                        texte_cellule += '</span>'
+                        
+                        html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); color: {color}; font-weight: 600;">{texte_cellule}</td>'
+                    else:
+                        html_table += '<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); color: #9ca3af;">-</td>'
+                
+                html_table += '</tr>'
+            
+            html_table += '</tbody></table>'
+            st.markdown(html_table, unsafe_allow_html=True)
         else:
             st.info("Aucune donnée disponible")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_m10:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_mttr = get_mttr_par_categorie(annee_selectionnee)
-        mttr_moyen_global, mttr_median_global, nb_mttr = get_mttr_global(annee_selectionnee)
+        st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">⏱️ MTTR Moyen (CURATIVE uniquement)</h3>', unsafe_allow_html=True)
         
-        # KPI MTTR global
-        if mttr_moyen_global is not None:
-            col_mttr1, col_mttr2 = st.columns(2)
-            with col_mttr1:
-                st.metric("MTTR Moyen", f"{mttr_moyen_global:.1f}h", help="Moyenne du temps de résolution")
-            with col_mttr2:
-                st.metric("MTTR Médian", f"{mttr_median_global:.1f}h" if mttr_median_global else "N/A", help="Médiane du temps de résolution")
+        # Récupérer l'année N-1
+        annee_n1 = None
+        if annee_principale and annee_principale > 2023:
+            annee_n1 = annee_principale - 1
         
-        if not df_mttr.empty:
-            # Graphique avec moyenne et médiane
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                name='Moyenne (jours)',
-                x=df_mttr['categorie'],
-                y=df_mttr['mttr_moyen_jours'],
-                marker_color='#3b82f6',
-                text=[f"{x:.1f}j" for x in df_mttr['mttr_moyen_jours']],
-                textposition='outside'
-            ))
-            fig.add_trace(go.Bar(
-                name='Médiane (jours)',
-                x=df_mttr['categorie'],
-                y=df_mttr['mttr_median_jours'],
-                marker_color='#10b981',
-                text=[f"{x:.1f}j" for x in df_mttr['mttr_median_jours']],
-                textposition='outside'
-            ))
-            fig.update_layout(
-                title='⏱️ MTTR par Catégorie (Moyenne vs Médiane)',
-                xaxis_title='Catégorie',
-                yaxis_title='Délai (jours)',
-                barmode='group',
-                height=350,
-                xaxis=dict(tickangle=-45),
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            fig.add_hline(y=7, line_dash="dash", line_color="orange", annotation_text="Target 7j")
-            fig = apply_glassmorphism_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # M.11 & M.13 : Interventions en Cours et Temps de Réponse
-    col_m11, col_m13 = st.columns(2)
-    
-    with col_m11:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_en_cours = get_interventions_en_cours(annee_selectionnee)
-        nb_en_cours = len(df_en_cours) if not df_en_cours.empty else 0
+        df_mttr_zone_sev = get_mttr_par_zone_severite(annee_principale, annee_n1)
         
-        if nb_en_cours > 0:
-            if nb_en_cours > 20:
-                st.warning(f"⚠️ {nb_en_cours} interventions en cours (seuil dépassé: >20)")
-            else:
-                st.success(f"✅ {nb_en_cours} interventions en cours")
+        if not df_mttr_zone_sev.empty:
+            # Créer une matrice Zone x Sévérité
+            severites = ['Critical', 'Normal', 'Low', 'Warning']
+            zones = sorted(df_mttr_zone_sev['zone_mainteneur'].unique())
             
-            st.dataframe(
-                df_en_cours.head(20),
-                column_config={
-                    "numero_intervention": "N°",
-                    "nom_site": "Site",
-                    "categorie": "Catégorie",
-                    "titre_intervention": "Titre",
-                    "anciennete_jours": st.column_config.NumberColumn("Ancienneté (jours)", format="%.0f"),
-                    "severite_categorie": "Sévérité"
-                },
-                hide_index=True,
-                use_container_width=True,
-                height=400
-            )
-        else:
-            st.info("✅ Aucune intervention en cours")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col_m13:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_temps_rep = get_temps_reponse_moyen(annee_selectionnee)
-        if not df_temps_rep.empty:
-            fig = px.bar(
-                df_temps_rep,
-                x='categorie',
-                y='temps_reponse_heures',
-                title='⚡ Temps de Réponse Moyen (heures)',
-                labels={'categorie': 'Catégorie', 'temps_reponse_heures': 'Heures'},
-                color='temps_reponse_heures',
-                color_continuous_scale='Blues',
-                text='temps_reponse_heures'
-            )
-            fig.update_traces(texttemplate='%{text:.1f}h', textposition='outside')
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False, xaxis=dict(tickangle=-45))
-            st.plotly_chart(fig, use_container_width=True)
+            # Créer le tableau HTML
+            html_table = '<table style="width: 100%; border-collapse: collapse; font-size: 13px;">'
+            html_table += '<thead><tr style="background: rgba(15, 23, 42, 0.8); color: white; font-weight: 600;">'
+            html_table += '<th style="padding: 10px; text-align: left; border: 1px solid rgba(0,0,0,0.1);">Zone Maintenance</th>'
+            for sev in severites:
+                html_table += f'<th style="padding: 10px; text-align: center; border: 1px solid rgba(0,0,0,0.1);">{sev}</th>'
+            html_table += '</tr></thead><tbody>'
+            
+            for zone in zones:
+                html_table += '<tr style="background: rgba(255, 255, 255, 0.7);">'
+                html_table += f'<td style="padding: 8px; border: 1px solid rgba(0,0,0,0.1); font-weight: 500;">{zone}</td>'
+                
+                for sev in severites:
+                    row = df_mttr_zone_sev[(df_mttr_zone_sev['zone_mainteneur'] == zone) & 
+                                          (df_mttr_zone_sev['severite_categorie'] == sev)]
+                    if not row.empty:
+                        mttr_jours = float(row.iloc[0]['mttr_moyen_jours'])
+                        mttr_median_jours = row.iloc[0].get('mttr_median_jours')
+                        mttr_moyen_n1 = row.iloc[0].get('mttr_moyen_n1')
+                        mttr_median_n1 = row.iloc[0].get('mttr_median_n1')
+                        
+                        # Toujours afficher en jours avec 2 décimales pour précision
+                        display_value = f"{mttr_jours:.2f}j"
+                        
+                        # Ajouter la médiane entre parenthèses en gris clair (toujours en jours)
+                        median_text = ""
+                        if mttr_median_jours is not None and not pd.isna(mttr_median_jours):
+                            median_text = f" ({float(mttr_median_jours):.2f}j)"
+                        
+                        # Couleur selon le MTTR (vert < 7j, orange 7-30j, rouge > 30j)
+                        if mttr_jours <= 7:
+                            color = '#10b981'
+                        elif mttr_jours <= 30:
+                            color = '#f59e0b'
+                        else:
+                            color = '#ef4444'
+                        
+                        # Construire le texte avec N-1 (toujours en jours)
+                        texte_cellule = f'{display_value}<span style="color: #9ca3af; font-weight: normal;">{median_text}</span>'
+                        if mttr_moyen_n1 is not None and not pd.isna(mttr_moyen_n1):
+                            mttr_n1_jours = float(mttr_moyen_n1)
+                            display_n1 = f"{mttr_n1_jours:.2f}j"
+                            texte_cellule += f'<br><span style="font-size: 11px; color: #6b7280;">N-1: {display_n1}'
+                            if mttr_median_n1 is not None and not pd.isna(mttr_median_n1):
+                                median_n1_text = f" ({float(mttr_median_n1):.2f}j)"
+                                texte_cellule += f'<span style="color: #9ca3af;">{median_n1_text}</span>'
+                            texte_cellule += '</span>'
+                        
+                        html_table += f'<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); color: {color}; font-weight: 600;">{texte_cellule}</td>'
+                    else:
+                        html_table += '<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); color: #9ca3af;">-</td>'
+                
+                html_table += '</tr>'
+            
+            html_table += '</tbody></table>'
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            # Explication MTTR Médian
+            st.markdown("---")
+            st.markdown('''
+            <div style="background: rgba(59, 130, 246, 0.1); padding: 12px; border-radius: 10px; margin-top: 10px;">
+                <strong>💡 MTTR Médian :</strong><br>
+                Le <strong>MTTR Médian</strong> représente la valeur centrale (50ème percentile) du temps de résolution des interventions.
+                <br><br>
+                <strong>Différence avec MTTR Moyen :</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li><strong>Moyenne</strong> : Somme de tous les temps divisée par le nombre d'interventions (sensible aux valeurs extrêmes)</li>
+                    <li><strong>Médiane</strong> : Valeur qui sépare la moitié des interventions (plus robuste face aux valeurs extrêmes)</li>
+                </ul>
+                <strong>Exemple :</strong> Si vous avez [2h, 3h, 4h, 5h, 100h], la moyenne est 22.8h mais la médiane est 4h, ce qui reflète mieux la réalité pour la majorité des cas.
+            </div>
+            ''', unsafe_allow_html=True)
         else:
             st.info("Aucune donnée disponible")
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # M.SLA : SLA Clôture (≤7j et ≤30j)
+    # M.SLA : SLA Clôture par Zone et Sévérité (CURATIVE uniquement)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-    df_sla_global = get_sla_cloture_global(annee_selectionnee)
-    df_sla_detail = get_sla_cloture_detail(annee_selectionnee)
     
-    # KPIs SLA globaux
-    if not df_sla_global.empty:
-        sla_7j_pct = df_sla_global.iloc[0]['sla_7j_pct']
-        sla_30j_pct = df_sla_global.iloc[0]['sla_30j_pct']
-        nb_7j = int(df_sla_global.iloc[0]['nb_7j'])
-        nb_30j = int(df_sla_global.iloc[0]['nb_30j'])
-        nb_total = int(df_sla_global.iloc[0]['nb_total'])
+    # Titre avec explication
+    st.markdown('''
+    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+        <h3 style="color: #1f2937; margin: 0; margin-right: 10px;">📊 SLA Clôture par Zone (CURATIVE uniquement)</h3>
+        <span style="font-size: 12px; color: #6b7280; font-style: italic;">
+            Il s'agit d'objectifs de délai de clôture des interventions de maintenance. "Critical" = SLA ≤3j ouvrés ; "Normal" = SLA ≤7j ouvrés ; "Low" = SLA ≤10j ouvrés ; "Warning" = SLA ≤20j ouvrés
+        </span>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    df_sla_zone_sev = get_sla_cloture_par_zone_severite(annee_principale)
+    
+    if not df_sla_zone_sev.empty:
+        # Créer un graphique par zone de maintenance
+        zones = sorted(df_sla_zone_sev['zone_mainteneur'].unique())
+        severites = ['Critical', 'Normal', 'Low', 'Warning']
         
-        col_sla1, col_sla2, col_sla3 = st.columns(3)
-        with col_sla1:
-            delta_sla7 = sla_7j_pct - 80  # Target 80%
-            st.metric("SLA ≤7j", f"{sla_7j_pct:.1f}%", f"{delta_sla7:+.1f}%", 
-                     delta_color="normal" if sla_7j_pct >= 80 else "inverse",
-                     help=f"{nb_7j}/{nb_total} interventions clôturées en ≤7j")
-        with col_sla2:
-            delta_sla30 = sla_30j_pct - 95  # Target 95%
-            st.metric("SLA ≤30j", f"{sla_30j_pct:.1f}%", f"{delta_sla30:+.1f}%",
-                     delta_color="normal" if sla_30j_pct >= 95 else "inverse",
-                     help=f"{nb_30j}/{nb_total} interventions clôturées en ≤30j")
-        with col_sla3:
-            st.metric("Total Interventions", f"{nb_total}", help="Interventions résolues")
+        # Objectifs par sévérité
+        objectifs_severite = {
+            'Critical': 3,
+            'Normal': 7,
+            'Low': 10,
+            'Warning': 20
+        }
         
-        # Graphique évolution mensuelle
-        if not df_sla_detail.empty:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                name='SLA ≤7j',
-                x=df_sla_detail['mois'],
-                y=df_sla_detail['sla_7j_pct'],
-                mode='lines+markers',
-                line=dict(color='#10b981', width=3),
-                marker=dict(size=8),
-                fill='tonexty',
-                fillcolor='rgba(16, 185, 129, 0.1)'
-            ))
-            fig.add_trace(go.Scatter(
-                name='SLA ≤30j',
-                x=df_sla_detail['mois'],
-                y=df_sla_detail['sla_30j_pct'],
-                mode='lines+markers',
-                line=dict(color='#3b82f6', width=3),
-                marker=dict(size=8)
-            ))
-            fig.add_hline(y=80, line_dash="dash", line_color="orange", annotation_text="Target 80% (≤7j)")
-            fig.add_hline(y=95, line_dash="dash", line_color="green", annotation_text="Target 95% (≤30j)")
-            fig.update_layout(
-                title='📊 Évolution SLA Clôture (Mensuel)',
-                xaxis_title='Mois',
-                yaxis_title='Taux (%)',
-                yaxis=dict(range=[0, 100]),
-                height=350,
-                hovermode='x unified'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
+        # Couleurs par sévérité
+        colors_severite = {
+            'Critical': '#ef4444',
+            'Normal': '#f59e0b',
+            'Low': '#3b82f6',
+            'Warning': '#10b981'
+        }
+        
+        # Créer une grille 2 colonnes x 5 rangées pour les graphiques
+        # Organiser les zones par rangées de 2
+        for row_idx in range(0, len(zones), 2):
+            cols = st.columns(2)
+            
+            for col_idx in range(2):
+                zone_idx = row_idx + col_idx
+                if zone_idx < len(zones):
+                    zone = zones[zone_idx]
+                    
+                    with cols[col_idx]:
+                        st.markdown(f'<h4 style="color: #1f2937; margin-top: 1rem; margin-bottom: 0.5rem;">{zone}</h4>', unsafe_allow_html=True)
+                        
+                        df_zone = df_sla_zone_sev[df_sla_zone_sev['zone_mainteneur'] == zone]
+                        
+                        if not df_zone.empty:
+                            fig = go.Figure()
+                            
+                            # Ajouter une trace pour chaque sévérité
+                            for sev in severites:
+                                df_sev = df_zone[df_zone['severite_categorie'] == sev]
+                                if not df_sev.empty:
+                                    sla_pct = float(df_sev.iloc[0]['sla_pct'])
+                                    nb_total = int(df_sev.iloc[0]['nb_total'])
+                                    nb_respect = int(df_sev.iloc[0]['nb_respect_sla'])
+                                    objectif = int(df_sev.iloc[0]['objectif_jours'])
+                                    
+                                    fig.add_trace(go.Bar(
+                                        name=f'{sev} (≤{objectif}j)',
+                                        x=[sev],
+                                        y=[sla_pct],
+                                        text=[f'{sla_pct:.1f}%<br>({nb_respect}/{nb_total})'],
+                                        textposition='outside',
+                                        marker_color=colors_severite.get(sev, '#6b7280'),
+                                        hovertemplate=f'<b>{sev}</b><br>SLA: {sla_pct:.1f}%<br>Objectif: ≤{objectif}j ouvrés<br>Respecté: {nb_respect}/{nb_total}<extra></extra>'
+                                    ))
+                            
+                            # Ajouter une seule ligne d'objectif à 95% pour toutes les sévérités
+                            fig.add_hline(
+                                y=95,
+                                line_dash="dash",
+                                line_color="#6b7280",
+                                annotation_text="Target 95%",
+                                annotation_position="right",
+                                annotation_font_size=10
+                            )
+                            
+                            fig.update_layout(
+                                title=f'',
+                                xaxis_title='Sévérité',
+                                yaxis_title='Taux de respect SLA (%)',
+                                yaxis=dict(range=[0, 100]),
+                                height=350,
+                                barmode='group',
+                                showlegend=True,
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                            )
+                            fig = apply_glassmorphism_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info(f"Aucune donnée disponible pour {zone}")
     else:
         st.info("Aucune donnée SLA disponible")
     
@@ -5171,8 +6615,8 @@ def show_maintenance_view():
     
     with col_m14:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_mens = get_cout_maintenance_detail(annee_selectionnee)
-        cout_total_2025 = get_kpi_cout_maintenance(annee_selectionnee)
+        df_cout_mens = get_cout_maintenance_detail(annee_principale)
+        cout_total_2025 = get_kpi_cout_maintenance(annee_principale)
         cout_total_2024 = get_kpi_cout_maintenance(2024)
         
         if not df_cout_mens.empty:
@@ -5194,7 +6638,7 @@ def show_maintenance_view():
     
     with col_m15:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_cat = get_cout_par_categorie(annee_selectionnee)
+        df_cout_cat = get_cout_par_categorie(annee_principale)
         if not df_cout_cat.empty:
             fig = px.bar(
                 df_cout_cat,
@@ -5221,7 +6665,7 @@ def show_maintenance_view():
     
     with col_m16:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_site = get_cout_par_site(annee_selectionnee)
+        df_cout_site = get_cout_par_site(annee_principale)
         if not df_cout_site.empty:
             fig = px.bar(
                 df_cout_site.head(15),
@@ -5242,7 +6686,7 @@ def show_maintenance_view():
     
     with col_m18:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_type = get_cout_par_categorie(annee_selectionnee)
+        df_cout_type = get_cout_par_categorie(annee_principale)
         if not df_cout_type.empty:
             fig = px.pie(
                 df_cout_type,
@@ -5280,7 +6724,7 @@ def show_maintenance_view():
     ''', unsafe_allow_html=True)
     
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-    df_dispo_mens = get_disponibilite_mensuelle(annee_selectionnee)
+    df_dispo_mens = get_disponibilite_mensuelle(annee_principale)
     if not df_dispo_mens.empty:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -5331,7 +6775,7 @@ def show_maintenance_view():
     
     # KPI Global Interventions / 100 MW
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-    df_interv_100mw = get_interventions_par_100_mw(annee_selectionnee)
+    df_interv_100mw = get_interventions_par_100_mw(annee_principale)
     if not df_interv_100mw.empty:
         # KPI global
         total_interv = df_interv_100mw['nb_interventions'].sum()
@@ -5346,7 +6790,7 @@ def show_maintenance_view():
                 delta=None
             )
         with col_kpi2:
-            df_delai_median = get_delai_median_prise_en_charge(annee_selectionnee)
+            df_delai_median = get_delai_median_prise_en_charge(annee_principale)
             if not df_delai_median.empty:
                 median_global = df_delai_median['delai_median_heures'].median()
                 st.metric(
@@ -5378,7 +6822,7 @@ def show_maintenance_view():
     
     # Tableau complet KPIs par Zone
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-    df_zones_kpis = get_kpis_par_zone_mainteneur(annee_selectionnee)
+    df_zones_kpis = get_kpis_par_zone_mainteneur(annee_principale)
     if not df_zones_kpis.empty:
         st.markdown('<h4 style="color: #1f2937; margin-bottom: 16px;">KPIs Complets par Zone Mainteneur</h4>', unsafe_allow_html=True)
         st.dataframe(
@@ -5410,7 +6854,7 @@ def show_maintenance_view():
     
     with col_motifs:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_top_motifs = get_top_motifs_interventions(annee_selectionnee, limit=10)
+        df_top_motifs = get_top_motifs_interventions(annee_principale, limit=10)
         if not df_top_motifs.empty:
             fig = px.bar(
                 df_top_motifs.head(10),
@@ -5431,7 +6875,7 @@ def show_maintenance_view():
     
     with col_sites:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_top_sites = get_top_sites_curatif_par_mw(annee_selectionnee, limit=15)
+        df_top_sites = get_top_sites_curatif_par_mw(annee_principale, limit=15)
         if not df_top_sites.empty:
             fig = px.bar(
                 df_top_sites.head(15),
@@ -5470,7 +6914,7 @@ def show_maintenance_view():
     ">🏢 Analyses par SPV (Prestataire)</div>
     ''', unsafe_allow_html=True)
     
-    df_spv_metrics = get_spv_metrics_2025(annee_selectionnee)
+    df_spv_metrics = get_spv_metrics_2025(annee_principale)
     
     if not df_spv_metrics.empty:
         # Tableau complet des métriques par SPV
