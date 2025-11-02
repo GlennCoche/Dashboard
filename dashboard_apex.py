@@ -5747,6 +5747,47 @@ def get_zones_maintenance_disponibles():
 def show_maintenance_view():
     """Affiche la vue Maintenance complète"""
     
+    # Script JavaScript pour supprimer le hash de l'URL et forcer le scroll en haut
+    st.markdown('''
+    <script>
+    (function() {
+        // Supprimer le hash de l'URL immédiatement
+        if (window.location.hash) {
+            window.history.replaceState(null, null, ' ');
+        }
+        
+        // Fonction pour forcer le scroll en haut
+        function scrollToTop() {
+            window.scrollTo(0, 0);
+            // Essayer de scroll le conteneur Streamlit si disponible
+            try {
+                const streamlitContainer = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                if (streamlitContainer) {
+                    streamlitContainer.scrollTop = 0;
+                }
+            } catch(e) {
+                // Ignorer les erreurs si window.parent n'est pas accessible
+            }
+        }
+        
+        // Forcer immédiatement
+        scrollToTop();
+        
+        // Aussi au chargement complet
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', scrollToTop);
+        } else {
+            scrollToTop();
+        }
+        
+        // Et après un court délai pour être sûr
+        setTimeout(scrollToTop, 50);
+        setTimeout(scrollToTop, 200);
+        setTimeout(scrollToTop, 500);
+    })();
+    </script>
+    ''', unsafe_allow_html=True)
+    
     st.markdown('''
     <div style="
         font-size: 2.5rem;
@@ -6224,6 +6265,9 @@ def show_maintenance_view():
                                     }
                                 else:
                                     severite_data[sev] = {'nb_2025': 0, 'nb_n1': 0}
+                        else:
+                            for sev in severites:
+                                severite_data[sev] = {'nb_2025': 0, 'nb_n1': 0}
                         
                         html_table += f'<tr style="background: rgba(59, 130, 246, 0.15); font-weight: 600;">'
                         html_table += '<td style="padding: 8px; border: 1px solid rgba(0,0,0,0.1);"><i>Total SPV</i></td>'
@@ -6534,7 +6578,12 @@ def show_maintenance_view():
                     zone = zones[zone_idx]
                     
                     with cols[col_idx]:
-                        st.markdown(f'<h4 style="color: #1f2937; margin-top: 1rem; margin-bottom: 0.5rem;">{zone}</h4>', unsafe_allow_html=True)
+                        # Utiliser un ID explicite pour éviter les anchors automatiques Streamlit
+                        # Normaliser le nom de zone pour l'ID (remplacer espaces et caractères spéciaux)
+                        zone_id = zone.lower().replace(' ', '-').replace('é', 'e').replace('è', 'e').replace('ê', 'e').replace('à', 'a').replace('ç', 'c')
+                        # Supprimer tout caractère non alphanumérique ou tiret
+                        zone_id = ''.join(c if c.isalnum() or c == '-' else '' for c in zone_id)
+                        st.markdown(f'<h4 id="zone-sla-{zone_id}" style="color: #1f2937; margin-top: 1rem; margin-bottom: 0.5rem;">{zone}</h4>', unsafe_allow_html=True)
                         
                         df_zone = df_sla_zone_sev[df_sla_zone_sev['zone_mainteneur'] == zone]
                         
@@ -6570,24 +6619,550 @@ def show_maintenance_view():
                                 annotation_font_size=10
                             )
                             
-                            fig.update_layout(
+            fig.update_layout(
                                 title=f'',
                                 xaxis_title='Sévérité',
                                 yaxis_title='Taux de respect SLA (%)',
                                 yaxis=dict(range=[0, 100]),
-                                height=350,
+                height=350,
                                 barmode='group',
-                                showlegend=True,
-                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                            )
-                            fig = apply_glassmorphism_theme(fig)
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            fig = apply_glassmorphism_theme(fig)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
                             st.info(f"Aucune donnée disponible pour {zone}")
     else:
         st.info("Aucune donnée SLA disponible")
     
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION: Zones à fortes densités par intervention
+    # ============================================
+    st.markdown('''
+    <div style="
+        padding: 16px 24px;
+        margin: 2rem 0 1rem 0;
+        font-size: 1.3rem;
+        font-weight: 600;
+        color: #1f2937;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    ">🗺️ Zones à fortes densités par intervention</div>
+    ''', unsafe_allow_html=True)
+    
+    # Fonction pour récupérer les interventions par site avec coordonnées et zones de maintenance
+    def get_interventions_par_site_geo(annee):
+        """Récupère les interventions par site avec coordonnées et zones de maintenance"""
+        query = f"""
+        SELECT 
+            e.id_site,
+            e.nom_site,
+            COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
+            e.latitude,
+            e.longitude,
+            COUNT(i.numero_intervention) as nb_interventions
+        FROM interventions i
+        INNER JOIN exposition e ON i.id_site = e.id_site
+        WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
+        AND e.latitude IS NOT NULL 
+        AND e.longitude IS NOT NULL
+        GROUP BY e.id_site, e.nom_site, e.zone_mainteneur, e.latitude, e.longitude
+        """
+        df = load_data_from_db(query)
+        return df if df is not None and not df.empty else pd.DataFrame()
+    
+    df_interventions_geo = get_interventions_par_site_geo(annee_principale)
+    
+    if not df_interventions_geo.empty:
+        # Calculer le total d'interventions pour les pourcentages
+        total_interventions = df_interventions_geo['nb_interventions'].sum()
+        
+        # Définir les territoires d'outre-mer
+        territoires_om = {
+            "Guadeloupe": {
+                "lat_range": [15.5, 16.5],
+                "lon_range": [-62.0, -61.0],
+                "center": {"lat": 16.15, "lon": -61.6},
+                "zoom": 8.2,
+                "color": "#3b82f6"
+            },
+            "Martinique": {
+                "lat_range": [14.3, 14.9],
+                "lon_range": [-61.3, -60.7],
+                "center": {"lat": 14.64, "lon": -61.0},
+                "zoom": 8.8,
+                "color": "#3b82f6"
+            },
+            "Guyane": {
+                "lat_range": [2.0, 6.0],
+                "lon_range": [-54.5, -51.5],
+                "center": {"lat": 4.0, "lon": -53.0},
+                "zoom": 5.5,
+                "color": "#10b981"
+            },
+            "La Réunion": {
+                "lat_range": [-21.5, -20.8],
+                "lon_range": [55.2, 55.8],
+                "center": {"lat": -21.15, "lon": 55.5},
+                "zoom": 8.5,
+                "color": "#3b82f6"
+            }
+        }
+        
+        # Couleurs pour les zones de maintenance
+        zone_colors = {
+            'BayWa': '#3b82f6',  # Bleu
+            'ENER': '#10b981',    # Vert
+            'MSP': '#f59e0b',     # Orange
+            'Novasource': '#ef4444',  # Rouge
+            'Phoebus': '#8b5cf6',  # Violet
+            'SGTRL_Ouest': '#06b6d4',  # Cyan
+            'SGTRL_Sud-Est': '#f97316',  # Orange foncé
+            'VergnO&M': '#84cc16',  # Vert clair
+            'Zone DOM TOM': '#ec4899'  # Rose
+        }
+        
+        # Filtrer France Métropolitaine (hors territoires d'outre-mer)
+        def is_metropole(lat, lon):
+            """Vérifie si le site est en France métropolitaine"""
+            # Guadeloupe
+            if 15.5 <= lat <= 16.5 and -62.0 <= lon <= -61.0:
+                return False
+            # Martinique
+            if 14.3 <= lat <= 14.9 and -61.3 <= lon <= -60.7:
+                return False
+            # Guyane
+            if 2.0 <= lat <= 6.0 and -54.5 <= lon <= -51.5:
+                return False
+            # La Réunion
+            if -21.5 <= lat <= -20.8 and 55.2 <= lon <= 55.8:
+                return False
+            # France métropolitaine
+            if 42.0 <= lat <= 51.5 and -5.0 <= lon <= 10.0:
+                return True
+            return False
+        
+        df_metropole = df_interventions_geo[df_interventions_geo.apply(lambda row: is_metropole(row['latitude'], row['longitude']), axis=1)]
+        
+        # Layout: France Métropolitaine à gauche, 4 territoires à droite
+        col_left, col_right = st.columns([2, 1])
+        
+        with col_left:
+            # Carte France Métropolitaine
+            if not df_metropole.empty:
+                # Calculer le % pour la métropole
+                interventions_metropole = df_metropole['nb_interventions'].sum()
+                pct_metropole = (interventions_metropole / total_interventions * 100) if total_interventions > 0 else 0
+                
+                # Déterminer les zones géographiques (Nord-Ouest, Nord-Est, Sud-Ouest, Sud-Est)
+                def determine_zone_metropole(lat, lon):
+                    lat_center = 46.6
+                    lon_center = 2.5
+                    if lat >= lat_center:
+                        return "Nord-Ouest" if lon < lon_center else "Nord-Est"
+                    else:
+                        return "Sud-Ouest" if lon < lon_center else "Sud-Est"
+                
+                df_metropole['zone_geo'] = df_metropole.apply(lambda row: determine_zone_metropole(row['latitude'], row['longitude']), axis=1)
+                
+                # Calculer % par zone géographique
+                zones_geo = ['Nord-Ouest', 'Nord-Est', 'Sud-Ouest', 'Sud-Est']
+                zones_pct = {}
+                # Coordonnées centrées dans chaque quadrant pour un alignement visuel en grille
+                # Les zones Nord ont la même latitude pour alignement horizontal
+                # Les zones Sud ont la même latitude pour alignement horizontal
+                # Les zones Ouest ont des longitudes alignées
+                # Les zones Est ont des longitudes alignées
+                zones_coords = {
+                    'Nord-Ouest': {'lat': 48.5, 'lon': -1.2},   # Quadrant Nord-Ouest
+                    'Nord-Est': {'lat': 48.5, 'lon': 4.8},       # Quadrant Nord-Est (même lat que NO pour alignement)
+                    'Sud-Ouest': {'lat': 44.5, 'lon': -0.8},    # Quadrant Sud-Ouest
+                    'Sud-Est': {'lat': 44.5, 'lon': 5.0}        # Quadrant Sud-Est (même lat que SO pour alignement)
+                }
+                
+                for zone in zones_geo:
+                    df_zone = df_metropole[df_metropole['zone_geo'] == zone]
+                    interventions_zone = df_zone['nb_interventions'].sum()
+                    zones_pct[zone] = (interventions_zone / total_interventions * 100) if total_interventions > 0 else 0
+                
+                # Créer la carte
+                fig = go.Figure()
+                
+                # Ajouter les points par zone de maintenance avec couleurs
+                for zone_maintenance in df_metropole['zone_mainteneur'].unique():
+                    df_zone_maint = df_metropole[df_metropole['zone_mainteneur'] == zone_maintenance]
+                    color = zone_colors.get(zone_maintenance, '#6b7280')
+                    
+                    fig.add_trace(go.Scattermapbox(
+                        lat=df_zone_maint['latitude'],
+                        lon=df_zone_maint['longitude'],
+                        mode='markers',
+                        marker=dict(
+                            size=8,
+                            color=color,
+                            opacity=0.8
+                        ),
+                        text=df_zone_maint['nom_site'],
+                        hovertemplate='<b>%{text}</b><br>Zone: ' + zone_maintenance + '<br>Interventions: %{customdata}<extra></extra>',
+                        customdata=df_zone_maint['nb_interventions'].values,
+                        name=zone_maintenance,
+                        showlegend=True
+                    ))
+                
+                fig.update_layout(
+                    mapbox=dict(
+                        style='open-street-map',
+                        center={"lat": 46.8, "lon": 2.2},
+                        zoom=5.2
+                    ),
+                    margin=dict(l=0, r=0, t=50, b=0),
+                    height=700,
+                    title=dict(
+                        text=f'📍 France Métropolitaine<br><span style="font-size: 12px; color: #6b7280;">{len(df_metropole)} site(s)</span>',
+                        font=dict(size=15, color='#1f2937'),
+                        x=0.02,
+                        xanchor='left',
+                        y=0.98,
+                        yanchor='top'
+                    ),
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=0.98,
+                        xanchor="left",
+                        x=1.02
+                    )
+                )
+                
+                # Afficher la carte directement
+                st.plotly_chart(fig, use_container_width=True, key="france_metropole_interventions")
+                
+                # Overlay HTML positionné au-dessus de la carte avec margin négatif
+                overlay_parts = []
+                lat_range_fr = [42.0, 51.5]
+                lon_range_fr = [-5.0, 10.0]
+                
+                for zone, coords in zones_coords.items():
+                    pct_value = zones_pct[zone]
+                    # Couleur selon le pourcentage
+                    text_color = '#f97316' if pct_value < 10 else ('#10b981' if pct_value > 20 else '#6b7280')
+                    
+                    # Convertir lat/lon en position en pourcentage
+                    lat_percent = ((coords['lat'] - lat_range_fr[0]) / (lat_range_fr[1] - lat_range_fr[0])) * 100
+                    lon_percent = ((coords['lon'] - lon_range_fr[0]) / (lon_range_fr[1] - lon_range_fr[0])) * 100
+                    
+                    overlay_parts.append(f'<div style="position: absolute; top: {100 - lat_percent}%; left: {lon_percent}%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); border: 2px solid {text_color}; border-radius: 8px; padding: 8px 12px; font-size: 16px; font-weight: bold; color: {text_color}; font-family: Arial Black, sans-serif; pointer-events: none; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap;">{pct_value:.1f} %</div>')
+                
+                overlay_html = f'<div style="position: relative; margin-top: -700px; height: 700px; pointer-events: none; width: 100%;">{"".join(overlay_parts)}</div>'
+                st.markdown(overlay_html, unsafe_allow_html=True)
+                
+                # Statistiques France Métropolitaine
+                st.markdown(
+                    f"""
+                    <div style="padding: 20px; text-align: center; margin-top: 20px;">
+                        <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                            Interventions France Métropolitaine<br>par rapport au total
+                        </p>
+                        <p style="font-size: 36px; font-weight: bold; color: #3b82f6; margin: 20px 0;">
+                            {pct_metropole:.1f} %
+                        </p>
+                        <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                            Nombre d'interventions : {interventions_metropole:,}<br>
+                            Nombre total d'interventions : {total_interventions:,}
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.info("Aucune donnée disponible pour la France Métropolitaine")
+        
+        with col_right:
+            # Grille 2x2 pour les 4 territoires d'outre-mer
+            col_r1, col_r2 = st.columns(2)
+            territories_list = ["Guadeloupe", "Martinique", "Guyane", "La Réunion"]
+            
+            # Première ligne : Guadeloupe et Martinique
+            with col_r1:
+                territoire = "Guadeloupe"
+                config = territoires_om[territoire]
+                df_territoire = df_interventions_geo[
+                    (df_interventions_geo['latitude'] >= config['lat_range'][0]) &
+                    (df_interventions_geo['latitude'] <= config['lat_range'][1]) &
+                    (df_interventions_geo['longitude'] >= config['lon_range'][0]) &
+                    (df_interventions_geo['longitude'] <= config['lon_range'][1])
+                ]
+                if not df_territoire.empty:
+                    # Calculer le % pour ce territoire
+                    interventions_territoire = df_territoire['nb_interventions'].sum()
+                    pct_territoire = (interventions_territoire / total_interventions * 100) if total_interventions > 0 else 0
+                    
+                    # Créer la carte
+                    fig = go.Figure()
+                    
+                    # Ajouter les points par zone de maintenance
+                    for zone_maintenance in df_territoire['zone_mainteneur'].unique():
+                        df_zone_maint = df_territoire[df_territoire['zone_mainteneur'] == zone_maintenance]
+                        color = zone_colors.get(zone_maintenance, '#6b7280')
+                        
+                        fig.add_trace(go.Scattermapbox(
+                            lat=df_zone_maint['latitude'],
+                            lon=df_zone_maint['longitude'],
+                            mode='markers',
+                            marker=dict(
+                                size=8,
+                                color=color,
+                                opacity=0.8
+                            ),
+                            text=df_zone_maint['nom_site'],
+                            hovertemplate='<b>%{text}</b><br>Zone: ' + zone_maintenance + '<br>Interventions: %{customdata}<extra></extra>',
+                            customdata=df_zone_maint['nb_interventions'].values,
+                            name=zone_maintenance,
+                            showlegend=False
+                        ))
+                    
+                    fig.update_layout(
+                        mapbox=dict(
+                            style='open-street-map',
+                            center=config['center'],
+                            zoom=config['zoom']
+                        ),
+                        margin=dict(l=0, r=0, t=50, b=0),
+                        height=350,
+                        title=dict(
+                            text=f'📍 {territoire}<br><span style="font-size: 10px; color: #6b7280;">{len(df_territoire)} site(s)</span>',
+                            font=dict(size=12, color='#1f2937'),
+                            x=0.02,
+                            xanchor='left',
+                            y=0.98,
+                            yanchor='top'
+                        ),
+                        showlegend=False
+                    )
+                    
+                    # Afficher la carte directement
+                    st.plotly_chart(fig, use_container_width=True, key=f"territoire_{territoire}")
+                    
+                    # Overlay HTML positionné au-dessus de la carte avec margin négatif
+                    text_color = '#f97316' if pct_territoire < 5 else '#6b7280'
+                    lat_min = config['lat_range'][0]
+                    lat_max = config['lat_range'][1]
+                    lon_min = config['lon_range'][0]
+                    lon_max = config['lon_range'][1]
+                    
+                    # Position du centre en pourcentage
+                    lat_percent = ((config['center']['lat'] - lat_min) / (lat_max - lat_min)) * 100
+                    lon_percent = ((config['center']['lon'] - lon_min) / (lon_max - lon_min)) * 100
+                    
+                    overlay_html = f'<div style="position: relative; margin-top: -350px; height: 350px; pointer-events: none; width: 100%;"><div style="position: absolute; top: {100 - lat_percent}%; left: {lon_percent}%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); border: 2px solid {text_color}; border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: bold; color: {text_color}; font-family: Arial Black, sans-serif; pointer-events: none; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap;">{pct_territoire:.1f} %</div></div>'
+                    st.markdown(overlay_html, unsafe_allow_html=True)
+                else:
+                    st.info(f"Aucune donnée pour {territoire}")
+            
+            with col_r2:
+                territoire = "Martinique"
+                config = territoires_om[territoire]
+                df_territoire = df_interventions_geo[
+                    (df_interventions_geo['latitude'] >= config['lat_range'][0]) &
+                    (df_interventions_geo['latitude'] <= config['lat_range'][1]) &
+                    (df_interventions_geo['longitude'] >= config['lon_range'][0]) &
+                    (df_interventions_geo['longitude'] <= config['lon_range'][1])
+                ]
+                if not df_territoire.empty:
+                    interventions_territoire = df_territoire['nb_interventions'].sum()
+                    pct_territoire = (interventions_territoire / total_interventions * 100) if total_interventions > 0 else 0
+                    fig = go.Figure()
+                    for zone_maintenance in df_territoire['zone_mainteneur'].unique():
+                        df_zone_maint = df_territoire[df_territoire['zone_mainteneur'] == zone_maintenance]
+                        color = zone_colors.get(zone_maintenance, '#6b7280')
+                        fig.add_trace(go.Scattermapbox(
+                            lat=df_zone_maint['latitude'],
+                            lon=df_zone_maint['longitude'],
+                            mode='markers',
+                            marker=dict(size=8, color=color, opacity=0.8),
+                            text=df_zone_maint['nom_site'],
+                            hovertemplate='<b>%{text}</b><br>Zone: ' + zone_maintenance + '<br>Interventions: %{customdata}<extra></extra>',
+                            customdata=df_zone_maint['nb_interventions'].values,
+                            showlegend=False
+                        ))
+                    fig.update_layout(
+                        mapbox=dict(style='open-street-map', center=config['center'], zoom=config['zoom']),
+                        margin=dict(l=0, r=0, t=50, b=0),
+                        height=350,
+                        title=dict(text=f'📍 {territoire}<br><span style="font-size: 10px; color: #6b7280;">{len(df_territoire)} site(s)</span>', font=dict(size=12, color='#1f2937'), x=0.02, xanchor='left', y=0.98, yanchor='top'),
+                        showlegend=False
+                    )
+                    
+                    # Afficher la carte directement
+                    st.plotly_chart(fig, use_container_width=True, key=f"territoire_{territoire}")
+                    
+                    # Overlay HTML positionné au-dessus de la carte avec margin négatif
+                    text_color = '#f97316' if pct_territoire < 5 else '#6b7280'
+                    lat_min = config['lat_range'][0]
+                    lat_max = config['lat_range'][1]
+                    lon_min = config['lon_range'][0]
+                    lon_max = config['lon_range'][1]
+                    
+                    # Position du centre en pourcentage
+                    lat_percent = ((config['center']['lat'] - lat_min) / (lat_max - lat_min)) * 100
+                    lon_percent = ((config['center']['lon'] - lon_min) / (lon_max - lon_min)) * 100
+                    
+                    overlay_html = f'<div style="position: relative; margin-top: -350px; height: 350px; pointer-events: none; width: 100%;"><div style="position: absolute; top: {100 - lat_percent}%; left: {lon_percent}%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); border: 2px solid {text_color}; border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: bold; color: {text_color}; font-family: Arial Black, sans-serif; pointer-events: none; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap;">{pct_territoire:.1f} %</div></div>'
+                    st.markdown(overlay_html, unsafe_allow_html=True)
+                else:
+                    st.info(f"Aucune donnée pour {territoire}")
+            
+            # Deuxième ligne : Guyane et La Réunion
+            col_r3, col_r4 = st.columns(2)
+            
+            with col_r3:
+                territoire = "Guyane"
+                config = territoires_om[territoire]
+                df_territoire = df_interventions_geo[
+                    (df_interventions_geo['latitude'] >= config['lat_range'][0]) &
+                    (df_interventions_geo['latitude'] <= config['lat_range'][1]) &
+                    (df_interventions_geo['longitude'] >= config['lon_range'][0]) &
+                    (df_interventions_geo['longitude'] <= config['lon_range'][1])
+                ]
+                if not df_territoire.empty:
+                    interventions_territoire = df_territoire['nb_interventions'].sum()
+                    pct_territoire = (interventions_territoire / total_interventions * 100) if total_interventions > 0 else 0
+                    fig = go.Figure()
+                    
+                    for zone_maintenance in df_territoire['zone_mainteneur'].unique():
+                        df_zone_maint = df_territoire[df_territoire['zone_mainteneur'] == zone_maintenance]
+                        color = zone_colors.get(zone_maintenance, '#6b7280')
+                        fig.add_trace(go.Scattermapbox(
+                            lat=df_zone_maint['latitude'],
+                            lon=df_zone_maint['longitude'],
+                            mode='markers',
+                            marker=dict(size=8, color=color, opacity=0.8),
+                            text=df_zone_maint['nom_site'],
+                            hovertemplate='<b>%{text}</b><br>Zone: ' + zone_maintenance + '<br>Interventions: %{customdata}<extra></extra>',
+                            customdata=df_zone_maint['nb_interventions'].values,
+                            showlegend=False
+                        ))
+                    fig.update_layout(
+                        mapbox=dict(style='open-street-map', center=config['center'], zoom=config['zoom']),
+                        margin=dict(l=0, r=0, t=50, b=0),
+                        height=350,
+                        title=dict(text=f'📍 {territoire}<br><span style="font-size: 10px; color: #6b7280;">{len(df_territoire)} site(s)</span>', font=dict(size=12, color='#1f2937'), x=0.02, xanchor='left', y=0.98, yanchor='top'),
+                        showlegend=False
+                    )
+                    
+                    # Afficher la carte directement
+                    st.plotly_chart(fig, use_container_width=True, key=f"territoire_{territoire}")
+                    
+                    # Overlay HTML positionné au-dessus de la carte avec margin négatif
+                    text_color = '#f97316' if pct_territoire < 5 else '#6b7280'
+                    lat_min = config['lat_range'][0]
+                    lat_max = config['lat_range'][1]
+                    lon_min = config['lon_range'][0]
+                    lon_max = config['lon_range'][1]
+                    
+                    # Position du centre en pourcentage
+                    lat_percent = ((config['center']['lat'] - lat_min) / (lat_max - lat_min)) * 100
+                    lon_percent = ((config['center']['lon'] - lon_min) / (lon_max - lon_min)) * 100
+                    
+                    overlay_html = f'<div style="position: relative; margin-top: -350px; height: 350px; pointer-events: none; width: 100%;"><div style="position: absolute; top: {100 - lat_percent}%; left: {lon_percent}%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); border: 2px solid {text_color}; border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: bold; color: {text_color}; font-family: Arial Black, sans-serif; pointer-events: none; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap;">{pct_territoire:.1f} %</div></div>'
+                    st.markdown(overlay_html, unsafe_allow_html=True)
+                else:
+                    st.info(f"Aucune donnée pour {territoire}")
+            
+            with col_r4:
+                territoire = "La Réunion"
+                config = territoires_om[territoire]
+                df_territoire = df_interventions_geo[
+                    (df_interventions_geo['latitude'] >= config['lat_range'][0]) &
+                    (df_interventions_geo['latitude'] <= config['lat_range'][1]) &
+                    (df_interventions_geo['longitude'] >= config['lon_range'][0]) &
+                    (df_interventions_geo['longitude'] <= config['lon_range'][1])
+                ]
+                if not df_territoire.empty:
+                    interventions_territoire = df_territoire['nb_interventions'].sum()
+                    pct_territoire = (interventions_territoire / total_interventions * 100) if total_interventions > 0 else 0
+                    fig = go.Figure()
+                    for zone_maintenance in df_territoire['zone_mainteneur'].unique():
+                        df_zone_maint = df_territoire[df_territoire['zone_mainteneur'] == zone_maintenance]
+                        color = zone_colors.get(zone_maintenance, '#6b7280')
+                        fig.add_trace(go.Scattermapbox(
+                            lat=df_zone_maint['latitude'],
+                            lon=df_zone_maint['longitude'],
+                            mode='markers',
+                            marker=dict(size=8, color=color, opacity=0.8),
+                            text=df_zone_maint['nom_site'],
+                            hovertemplate='<b>%{text}</b><br>Zone: ' + zone_maintenance + '<br>Interventions: %{customdata}<extra></extra>',
+                            customdata=df_zone_maint['nb_interventions'].values,
+                            showlegend=False
+                        ))
+                    
+                    fig.update_layout(
+                        mapbox=dict(style='open-street-map', center=config['center'], zoom=config['zoom']),
+                        margin=dict(l=0, r=0, t=50, b=0),
+                        height=350,
+                        title=dict(text=f'📍 {territoire}<br><span style="font-size: 10px; color: #6b7280;">{len(df_territoire)} site(s)</span>', font=dict(size=12, color='#1f2937'), x=0.02, xanchor='left', y=0.98, yanchor='top'),
+                        showlegend=False
+                    )
+                    
+                    # Afficher la carte directement
+                    st.plotly_chart(fig, use_container_width=True, key=f"territoire_{territoire}")
+                    
+                    # Overlay HTML positionné au-dessus de la carte avec margin négatif
+                    text_color = '#f97316' if pct_territoire < 5 else '#6b7280'
+                    lat_min = config['lat_range'][0]
+                    lat_max = config['lat_range'][1]
+                    lon_min = config['lon_range'][0]
+                    lon_max = config['lon_range'][1]
+                    
+                    # Position du centre en pourcentage
+                    lat_percent = ((config['center']['lat'] - lat_min) / (lat_max - lat_min)) * 100
+                    lon_percent = ((config['center']['lon'] - lon_min) / (lon_max - lon_min)) * 100
+                    
+                    overlay_html = f'<div style="position: relative; margin-top: -350px; height: 350px; pointer-events: none; width: 100%;"><div style="position: absolute; top: {100 - lat_percent}%; left: {lon_percent}%; transform: translate(-50%, -50%); background: rgba(255, 255, 255, 0.95); border: 2px solid {text_color}; border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: bold; color: {text_color}; font-family: Arial Black, sans-serif; pointer-events: none; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.2); white-space: nowrap;">{pct_territoire:.1f} %</div></div>'
+                    st.markdown(overlay_html, unsafe_allow_html=True)
+                else:
+                    st.info(f"Aucune donnée pour {territoire}")
+            
+            # Statistiques Territoires d'Outre-Mer
+            total_om = sum([
+                df_interventions_geo[
+                    (df_interventions_geo['latitude'] >= territoires_om[t]['lat_range'][0]) &
+                    (df_interventions_geo['latitude'] <= territoires_om[t]['lat_range'][1]) &
+                    (df_interventions_geo['longitude'] >= territoires_om[t]['lon_range'][0]) &
+                    (df_interventions_geo['longitude'] <= territoires_om[t]['lon_range'][1])
+                ]['nb_interventions'].sum()
+                for t in territories_list
+            ])
+            pct_om = (total_om / total_interventions * 100) if total_interventions > 0 else 0
+            
+            st.markdown(
+                f"""
+                <div style="padding: 20px; text-align: center; margin-top: 20px;">
+                    <p style="font-size: 14px; color: #666; margin-bottom: 10px;">
+                        Interventions Territoires d'Outre-Mer<br>par rapport au total
+                    </p>
+                    <p style="font-size: 36px; font-weight: bold; color: #3b82f6; margin: 20px 0;">
+                        {pct_om:.1f} %
+                    </p>
+                    <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                        Nombre d'interventions : {total_om:,}<br>
+                        Nombre total d'interventions : {total_interventions:,}
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        st.info("Aucune donnée géographique disponible pour les interventions")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
