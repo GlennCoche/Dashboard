@@ -529,14 +529,14 @@ def get_kpi_taux_resolution(annee=None):
 
 def get_kpi_onduleurs_total():
     """Nombre total d'onduleurs"""
-    query = "SELECT COUNT(*) as total FROM onduleurs_view"
+    query = "SELECT COUNT(*) as total FROM onduleur_view"
     df = load_data_from_db(query)
     return int(df['total'].iloc[0]) if df is not None and not df.empty else 0
 
 
 def get_kpi_puissance_onduleurs():
     """Puissance totale des onduleurs (en MW)"""
-    query = "SELECT SUM(nominal_power) / 1000 as puissance_mw FROM onduleurs_view"
+    query = "SELECT SUM(nominal_power) / 1000 as puissance_mw FROM onduleur_view"
     df = load_data_from_db(query)
     return df['puissance_mw'].iloc[0] if df is not None and not df.empty and df['puissance_mw'].iloc[0] is not None else 0
 
@@ -5178,49 +5178,37 @@ def get_taux_resolution_par_zone_severite(annee, annee_n1=None):
 def get_mttr_par_zone_severite(annee, annee_n1=None):
     """MTTR moyen et médian par zone de maintenance et sévérité (uniquement CURATIVE)
     Retourne un DataFrame avec colonnes: zone_mainteneur, severite_categorie, mttr_moyen_jours, mttr_median_jours, mttr_moyen_heures, mttr_moyen_n1, mttr_median_n1
-    Calcul: 
-    - Si status_intervention IN ('closed', 'terminated', 'validated') : date_fin_intervention - date_creation_intervention
-    - Si status_intervention IN ('open', 'assigned', 'accepted') : date du jour - date_creation_intervention
+    Calcul: Utilisation directe de la colonne delai_intervention (moyenne)
     """
-    from datetime import datetime
-    
-    # Date actuelle pour les interventions ouvertes
-    date_actuelle = datetime.now()
-    
     # Requête pour année courante (exclut "Non défini")
     query = f"""
     SELECT 
         COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
         i.severite_categorie,
-        CASE 
-            WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') 
-            THEN JULIANDAY(i.date_fin_intervention) - JULIANDAY(i.date_creation_intervention)
-            WHEN LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted') 
-            THEN JULIANDAY('{date_actuelle.strftime("%Y-%m-%d")}') - JULIANDAY(i.date_creation_intervention)
-            ELSE NULL
-        END as mttr_jours
+        -- Utilisation directe de delai_intervention (sans conversion)
+        i.delai_intervention as mttr_heures
     FROM interventions i
     INNER JOIN exposition e ON i.id_site = e.id_site
     WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee}
     AND i.severite_categorie IS NOT NULL
     AND i.date_creation_intervention IS NOT NULL
     AND i.categorie = 'CURATIVE'
-    AND (
-        (LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') AND i.date_fin_intervention IS NOT NULL)
-        OR LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted')
-    )
+    AND i.delai_intervention IS NOT NULL
     """
     df_raw = load_data_from_db(query)
     if df_raw is None or df_raw.empty:
         df_result = pd.DataFrame()
     else:
-        # Calculer moyenne ET médiane par zone et sévérité
+        # Calculer moyenne ET médiane par zone et sévérité, avec comptage des interventions
         df_result = df_raw.groupby(['zone_mainteneur', 'severite_categorie']).agg({
-            'mttr_jours': ['mean', 'median']
+            'mttr_heures': ['mean', 'median', 'count']
         }).reset_index()
         
-        df_result.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours']
-        df_result['mttr_moyen_heures'] = df_result['mttr_moyen_jours'] * 24
+        df_result.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_heures', 'mttr_median_heures', 'nb_interventions']
+        # Utiliser directement les valeurs de delai_intervention (sans conversion)
+        # On considère que mttr_moyen_heures et mttr_median_heures sont directement utilisables
+        df_result['mttr_moyen_jours'] = df_result['mttr_moyen_heures']  # Pas de conversion
+        df_result['mttr_median_jours'] = df_result['mttr_median_heures']  # Pas de conversion
         df_result = df_result.sort_values(['zone_mainteneur', 'severite_categorie'])
     
     # Requête pour N-1 si fourni
@@ -5229,40 +5217,36 @@ def get_mttr_par_zone_severite(annee, annee_n1=None):
         SELECT 
             COALESCE(e.zone_mainteneur, 'Non défini') as zone_mainteneur,
             i.severite_categorie,
-            CASE 
-                WHEN LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') 
-                THEN JULIANDAY(i.date_fin_intervention) - JULIANDAY(i.date_creation_intervention)
-                WHEN LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted') 
-                THEN JULIANDAY('{date_actuelle.strftime("%Y-%m-%d")}') - JULIANDAY(i.date_creation_intervention)
-                ELSE NULL
-            END as mttr_jours
+            -- Utilisation directe de delai_intervention (sans conversion)
+            i.delai_intervention as mttr_heures
         FROM interventions i
         INNER JOIN exposition e ON i.id_site = e.id_site
         WHERE CAST(strftime('%Y', i.date_creation_intervention) AS INTEGER) = {annee_n1}
         AND i.severite_categorie IS NOT NULL
         AND i.date_creation_intervention IS NOT NULL
         AND i.categorie = 'CURATIVE'
-        AND (
-            (LOWER(i.status_intervention) IN ('closed', 'terminated', 'validated') AND i.date_fin_intervention IS NOT NULL)
-            OR LOWER(i.status_intervention) IN ('open', 'assigned', 'accepted')
-        )
+        AND i.delai_intervention IS NOT NULL
         """
         df_raw_n1 = load_data_from_db(query_n1)
         if df_raw_n1 is not None and not df_raw_n1.empty:
-            # Calculer moyenne et médiane par zone et sévérité pour N-1
+            # Calculer moyenne et médiane par zone et sévérité pour N-1, avec comptage des interventions
             df_n1_agg = df_raw_n1.groupby(['zone_mainteneur', 'severite_categorie']).agg({
-                'mttr_jours': ['mean', 'median']
+                'mttr_heures': ['mean', 'median', 'count']
             }).reset_index()
             
-            df_n1_agg.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours']
+            df_n1_agg.columns = ['zone_mainteneur', 'severite_categorie', 'mttr_moyen_heures', 'mttr_median_heures', 'nb_interventions_n1']
+            # Utiliser directement les valeurs de delai_intervention pour N-1 (sans conversion)
+            df_n1_agg['mttr_moyen_jours'] = df_n1_agg['mttr_moyen_heures']  # Pas de conversion
+            df_n1_agg['mttr_median_jours'] = df_n1_agg['mttr_median_heures']  # Pas de conversion
             
-            # Créer un dictionnaire pour N-1
+            # Créer un dictionnaire pour N-1 (en jours pour compatibilité avec l'affichage)
             n1_dict = {}
             for _, row in df_n1_agg.iterrows():
                 key = (row['zone_mainteneur'], row['severite_categorie'])
                 n1_dict[key] = {
                     'mttr_moyen': float(row['mttr_moyen_jours']),
-                    'mttr_median': float(row['mttr_median_jours'])
+                    'mttr_median': float(row['mttr_median_jours']),
+                    'nb_interventions': int(row['nb_interventions_n1'])
                 }
             
             # Ajouter les valeurs N-1 au DataFrame résultat
@@ -5275,16 +5259,22 @@ def get_mttr_par_zone_severite(annee, annee_n1=None):
                     lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('mttr_median', None),
                     axis=1
                 )
+                df_result['nb_interventions_n1'] = df_result.apply(
+                    lambda r: n1_dict.get((r['zone_mainteneur'], r['severite_categorie']), {}).get('nb_interventions', 0),
+                    axis=1
+                )
             else:
-                df_result = pd.DataFrame(columns=['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours', 'mttr_moyen_heures', 'mttr_moyen_n1', 'mttr_median_n1'])
+                df_result = pd.DataFrame(columns=['zone_mainteneur', 'severite_categorie', 'mttr_moyen_jours', 'mttr_median_jours', 'mttr_moyen_heures', 'mttr_moyen_n1', 'mttr_median_n1', 'nb_interventions_n1'])
         else:
             if not df_result.empty:
                 df_result['mttr_moyen_n1'] = None
                 df_result['mttr_median_n1'] = None
+                df_result['nb_interventions_n1'] = 0
     else:
         if not df_result.empty:
             df_result['mttr_moyen_n1'] = None
             df_result['mttr_median_n1'] = None
+            df_result['nb_interventions_n1'] = 0
     
     return df_result
 
@@ -5742,6 +5732,697 @@ def get_zones_maintenance_disponibles():
         pass
     # Valeurs par défaut si la colonne n'existe pas encore
     return ['BayWa', 'MSP', 'ENER']
+
+
+@st.cache_data
+def get_taux_recurrence_equipement(annee):
+    """Calcule le taux de récurrence par équipement avec métriques complètes (filtre CURATIVE uniquement)"""
+    annee_n1 = annee - 1
+    
+    query = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        COUNT(*) as nb_interventions,
+        COUNT(DISTINCT id_site) as nb_sites_impactes,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+                                    AND categorie = 'CURATIVE'
+                                    AND equipement_intervention IS NOT NULL), 2) as taux_pct,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site,
+        -- Délai moyen prise en charge (en heures) - utilisation de la colonne delai_intervention
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures,
+        -- Coût moyen d'intervention
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention,
+        -- Coût total d'intervention
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention,
+        -- Durée intervention moyenne (en heures)
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    GROUP BY equipement_intervention
+    HAVING COUNT(*) > 1
+    ORDER BY nb_interventions DESC
+    """
+    df = load_data_from_db(query)
+    
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Calculer MTTR médian par équipement (en Python car SQLite ne supporte pas bien les médianes dans GROUP BY)
+    query_mttr = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr = load_data_from_db(query_mttr)
+    
+    if df_mttr is not None and not df_mttr.empty:
+        df_mttr = df_mttr[df_mttr['mttr_heures'].notna()]
+        if not df_mttr.empty:
+            mttr_median = df_mttr.groupby('equipement')['mttr_heures'].median().reset_index()
+            mttr_median.columns = ['equipement', 'mttr_median_heures']
+            mttr_median['mttr_median_heures'] = mttr_median['mttr_median_heures'].round(2)
+            df = df.merge(mttr_median, on='equipement', how='left')
+        else:
+            df['mttr_median_heures'] = None
+    else:
+        df['mttr_median_heures'] = None
+    
+    # Calculer les valeurs N-1 pour comparaison (toutes les métriques)
+    query_n1 = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        COUNT(*) as nb_interventions_n1,
+        COUNT(DISTINCT id_site) as nb_sites_impactes_n1,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+                                    AND categorie = 'CURATIVE'
+                                    AND equipement_intervention IS NOT NULL), 2) as taux_pct_n1,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site_n1,
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures_n1,
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention_n1,
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention_n1,
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures_n1
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    GROUP BY equipement_intervention
+    """
+    df_n1 = load_data_from_db(query_n1)
+    
+    # Calculer MTTR médian N-1
+    query_mttr_n1 = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr_n1 = load_data_from_db(query_mttr_n1)
+    
+    if df_n1 is not None and not df_n1.empty:
+        df = df.merge(df_n1, on='equipement', how='left')
+        # Calculer MTTR médian N-1
+        if df_mttr_n1 is not None and not df_mttr_n1.empty:
+            df_mttr_n1 = df_mttr_n1[df_mttr_n1['mttr_heures'].notna()]
+            if not df_mttr_n1.empty:
+                mttr_median_n1 = df_mttr_n1.groupby('equipement')['mttr_heures'].median().reset_index()
+                mttr_median_n1.columns = ['equipement', 'mttr_median_heures_n1']
+                mttr_median_n1['mttr_median_heures_n1'] = mttr_median_n1['mttr_median_heures_n1'].round(2)
+                df = df.merge(mttr_median_n1, on='equipement', how='left')
+            else:
+                df['mttr_median_heures_n1'] = None
+        else:
+            df['mttr_median_heures_n1'] = None
+        
+        # Remplacer les NaN par des valeurs par défaut
+        df['nb_interventions_n1'] = df['nb_interventions_n1'].fillna(0).astype(int)
+        df['nb_sites_impactes_n1'] = df['nb_sites_impactes_n1'].fillna(0).astype(int)
+        df['taux_pct_n1'] = df['taux_pct_n1'].fillna(0)
+        df['recurrence_moyenne_par_site_n1'] = df['recurrence_moyenne_par_site_n1'].fillna(0)
+        df['delai_moyen_prise_en_charge_heures_n1'] = df['delai_moyen_prise_en_charge_heures_n1'].fillna(0)
+        df['cout_moyen_intervention_n1'] = df['cout_moyen_intervention_n1'].fillna(0)
+        df['cout_total_intervention_n1'] = df['cout_total_intervention_n1'].fillna(0)
+        df['duree_intervention_moyenne_heures_n1'] = df['duree_intervention_moyenne_heures_n1'].fillna(0)
+        if 'mttr_median_heures_n1' not in df.columns:
+            df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions'] - df['nb_interventions_n1']
+    else:
+        df['nb_interventions_n1'] = 0
+        df['nb_sites_impactes_n1'] = 0
+        df['taux_pct_n1'] = 0
+        df['recurrence_moyenne_par_site_n1'] = 0
+        df['delai_moyen_prise_en_charge_heures_n1'] = 0
+        df['cout_moyen_intervention_n1'] = 0
+        df['cout_total_intervention_n1'] = 0
+        df['duree_intervention_moyenne_heures_n1'] = 0
+        df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions']
+    
+    return df
+
+
+@st.cache_data
+def get_taux_recurrence_action_complet(annee):
+    """Calcule le taux de récurrence par action avec métriques complètes (filtre CURATIVE uniquement)"""
+    annee_n1 = annee - 1
+    
+    query = f"""
+    SELECT 
+        action_intervention as action,
+        COUNT(*) as nb_interventions,
+        COUNT(DISTINCT id_site) as nb_sites_impactes,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+                                    AND categorie = 'CURATIVE'
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site,
+        -- Délai moyen prise en charge (en heures) - utilisation de la colonne delai_intervention
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures,
+        -- Coût moyen d'intervention
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention,
+        -- Coût total d'intervention
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention,
+        -- Durée intervention moyenne (en heures)
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY action_intervention
+    HAVING COUNT(*) > 1
+    ORDER BY nb_interventions DESC
+    """
+    df = load_data_from_db(query)
+    
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Calculer MTTR médian par action (en Python car SQLite ne supporte pas bien les médianes dans GROUP BY)
+    query_mttr = f"""
+    SELECT 
+        action_intervention as action,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr = load_data_from_db(query_mttr)
+    
+    if df_mttr is not None and not df_mttr.empty:
+        df_mttr = df_mttr[df_mttr['mttr_heures'].notna()]
+        if not df_mttr.empty:
+            mttr_median = df_mttr.groupby('action')['mttr_heures'].median().reset_index()
+            mttr_median.columns = ['action', 'mttr_median_heures']
+            mttr_median['mttr_median_heures'] = mttr_median['mttr_median_heures'].round(2)
+            df = df.merge(mttr_median, on='action', how='left')
+        else:
+            df['mttr_median_heures'] = None
+    else:
+        df['mttr_median_heures'] = None
+    
+    # Calculer les valeurs N-1 pour comparaison (toutes les métriques)
+    query_n1 = f"""
+    SELECT 
+        action_intervention as action,
+        COUNT(*) as nb_interventions_n1,
+        COUNT(DISTINCT id_site) as nb_sites_impactes_n1,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+                                    AND categorie = 'CURATIVE'
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct_n1,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site_n1,
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures_n1,
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention_n1,
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention_n1,
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures_n1
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY action_intervention
+    """
+    df_n1 = load_data_from_db(query_n1)
+    
+    # Calculer MTTR médian N-1
+    query_mttr_n1 = f"""
+    SELECT 
+        action_intervention as action,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr_n1 = load_data_from_db(query_mttr_n1)
+    
+    if df_n1 is not None and not df_n1.empty:
+        df = df.merge(df_n1, on='action', how='left')
+        # Calculer MTTR médian N-1
+        if df_mttr_n1 is not None and not df_mttr_n1.empty:
+            df_mttr_n1 = df_mttr_n1[df_mttr_n1['mttr_heures'].notna()]
+            if not df_mttr_n1.empty:
+                mttr_median_n1 = df_mttr_n1.groupby('action')['mttr_heures'].median().reset_index()
+                mttr_median_n1.columns = ['action', 'mttr_median_heures_n1']
+                mttr_median_n1['mttr_median_heures_n1'] = mttr_median_n1['mttr_median_heures_n1'].round(2)
+                df = df.merge(mttr_median_n1, on='action', how='left')
+            else:
+                df['mttr_median_heures_n1'] = None
+        else:
+            df['mttr_median_heures_n1'] = None
+        
+        # Remplacer les NaN par des valeurs par défaut
+        df['nb_interventions_n1'] = df['nb_interventions_n1'].fillna(0).astype(int)
+        df['nb_sites_impactes_n1'] = df['nb_sites_impactes_n1'].fillna(0).astype(int)
+        df['taux_pct_n1'] = df['taux_pct_n1'].fillna(0)
+        df['recurrence_moyenne_par_site_n1'] = df['recurrence_moyenne_par_site_n1'].fillna(0)
+        df['delai_moyen_prise_en_charge_heures_n1'] = df['delai_moyen_prise_en_charge_heures_n1'].fillna(0)
+        df['cout_moyen_intervention_n1'] = df['cout_moyen_intervention_n1'].fillna(0)
+        df['cout_total_intervention_n1'] = df['cout_total_intervention_n1'].fillna(0)
+        df['duree_intervention_moyenne_heures_n1'] = df['duree_intervention_moyenne_heures_n1'].fillna(0)
+        if 'mttr_median_heures_n1' not in df.columns:
+            df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions'] - df['nb_interventions_n1']
+    else:
+        df['nb_interventions_n1'] = 0
+        df['nb_sites_impactes_n1'] = 0
+        df['taux_pct_n1'] = 0
+        df['recurrence_moyenne_par_site_n1'] = 0
+        df['delai_moyen_prise_en_charge_heures_n1'] = 0
+        df['cout_moyen_intervention_n1'] = 0
+        df['cout_total_intervention_n1'] = 0
+        df['duree_intervention_moyenne_heures_n1'] = 0
+        df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions']
+    
+    return df
+
+
+@st.cache_data
+def get_taux_recurrence_action(annee):
+    """Calcule le taux de récurrence par action (filtre CURATIVE uniquement)"""
+    query = f"""
+    SELECT 
+        action_intervention as action,
+        COUNT(*) as nb_interventions,
+        COUNT(DISTINCT id_site) as nb_sites_impactes,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+                                    AND categorie = 'CURATIVE'
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY action_intervention
+    HAVING COUNT(*) > 1
+    ORDER BY nb_interventions DESC
+    """
+    df = load_data_from_db(query)
+    return df if df is not None and not df.empty else pd.DataFrame()
+
+
+@st.cache_data
+def get_taux_recurrence_equipement_action_complet(annee):
+    """Calcule le taux de récurrence par combinaison équipement + action avec métriques complètes (filtre CURATIVE uniquement)"""
+    annee_n1 = annee - 1
+    
+    query = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        action_intervention as action,
+        COUNT(*) as nb_interventions,
+        COUNT(DISTINCT id_site) as nb_sites_impactes,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+                                    AND categorie = 'CURATIVE'
+                                    AND equipement_intervention IS NOT NULL 
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site,
+        -- Délai moyen prise en charge (en heures) - utilisation de la colonne delai_intervention
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures,
+        -- Coût moyen d'intervention
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention,
+        -- Coût total d'intervention
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention,
+        -- Durée intervention moyenne (en heures)
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY equipement_intervention, action_intervention
+    HAVING COUNT(*) > 1
+    ORDER BY nb_interventions DESC
+    """
+    df = load_data_from_db(query)
+    
+    if df is None or df.empty:
+        return pd.DataFrame()
+    
+    # Calculer MTTR médian par combinaison (en Python car SQLite ne supporte pas bien les médianes dans GROUP BY)
+    query_mttr = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        action_intervention as action,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr = load_data_from_db(query_mttr)
+    
+    if df_mttr is not None and not df_mttr.empty:
+        df_mttr = df_mttr[df_mttr['mttr_heures'].notna()]
+        if not df_mttr.empty:
+            mttr_median = df_mttr.groupby(['equipement', 'action'])['mttr_heures'].median().reset_index()
+            mttr_median.columns = ['equipement', 'action', 'mttr_median_heures']
+            mttr_median['mttr_median_heures'] = mttr_median['mttr_median_heures'].round(2)
+            df = df.merge(mttr_median, on=['equipement', 'action'], how='left')
+        else:
+            df['mttr_median_heures'] = None
+    else:
+        df['mttr_median_heures'] = None
+    
+    # Calculer les valeurs N-1 pour comparaison (toutes les métriques)
+    query_n1 = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        action_intervention as action,
+        COUNT(*) as nb_interventions_n1,
+        COUNT(DISTINCT id_site) as nb_sites_impactes_n1,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+                                    AND categorie = 'CURATIVE'
+                                    AND equipement_intervention IS NOT NULL 
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct_n1,
+        ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT id_site), 2) as recurrence_moyenne_par_site_n1,
+        ROUND(AVG(CASE WHEN delai_intervention IS NOT NULL THEN delai_intervention ELSE NULL END), 2) as delai_moyen_prise_en_charge_heures_n1,
+        ROUND(AVG(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE NULL END), 2) as cout_moyen_intervention_n1,
+        ROUND(SUM(CASE WHEN facturation_intervention IS NOT NULL THEN facturation_intervention ELSE 0 END), 2) as cout_total_intervention_n1,
+        ROUND(AVG(CASE WHEN duree_intervention_sur_site IS NOT NULL THEN duree_intervention_sur_site ELSE NULL END), 2) as duree_intervention_moyenne_heures_n1
+    FROM interventions i
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY equipement_intervention, action_intervention
+    """
+    df_n1 = load_data_from_db(query_n1)
+    
+    # Calculer MTTR médian N-1
+    query_mttr_n1 = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        action_intervention as action,
+        CASE 
+            WHEN LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL
+            THEN (JULIANDAY(date_fin_intervention) - JULIANDAY(date_creation_intervention)) * 24
+            ELSE NULL
+        END as mttr_heures
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee_n1}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    AND date_creation_intervention IS NOT NULL
+    AND (
+        (LOWER(status_intervention) IN ('closed', 'terminated', 'validated') AND date_fin_intervention IS NOT NULL)
+    )
+    """
+    df_mttr_n1 = load_data_from_db(query_mttr_n1)
+    
+    if df_n1 is not None and not df_n1.empty:
+        df = df.merge(df_n1, on=['equipement', 'action'], how='left')
+        # Calculer MTTR médian N-1
+        if df_mttr_n1 is not None and not df_mttr_n1.empty:
+            df_mttr_n1 = df_mttr_n1[df_mttr_n1['mttr_heures'].notna()]
+            if not df_mttr_n1.empty:
+                mttr_median_n1 = df_mttr_n1.groupby(['equipement', 'action'])['mttr_heures'].median().reset_index()
+                mttr_median_n1.columns = ['equipement', 'action', 'mttr_median_heures_n1']
+                mttr_median_n1['mttr_median_heures_n1'] = mttr_median_n1['mttr_median_heures_n1'].round(2)
+                df = df.merge(mttr_median_n1, on=['equipement', 'action'], how='left')
+            else:
+                df['mttr_median_heures_n1'] = None
+        else:
+            df['mttr_median_heures_n1'] = None
+        
+        # Remplacer les NaN par des valeurs par défaut
+        df['nb_interventions_n1'] = df['nb_interventions_n1'].fillna(0).astype(int)
+        df['nb_sites_impactes_n1'] = df['nb_sites_impactes_n1'].fillna(0).astype(int)
+        df['taux_pct_n1'] = df['taux_pct_n1'].fillna(0)
+        df['recurrence_moyenne_par_site_n1'] = df['recurrence_moyenne_par_site_n1'].fillna(0)
+        df['delai_moyen_prise_en_charge_heures_n1'] = df['delai_moyen_prise_en_charge_heures_n1'].fillna(0)
+        df['cout_moyen_intervention_n1'] = df['cout_moyen_intervention_n1'].fillna(0)
+        df['cout_total_intervention_n1'] = df['cout_total_intervention_n1'].fillna(0)
+        df['duree_intervention_moyenne_heures_n1'] = df['duree_intervention_moyenne_heures_n1'].fillna(0)
+        if 'mttr_median_heures_n1' not in df.columns:
+            df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions'] - df['nb_interventions_n1']
+    else:
+        df['nb_interventions_n1'] = 0
+        df['nb_sites_impactes_n1'] = 0
+        df['taux_pct_n1'] = 0
+        df['recurrence_moyenne_par_site_n1'] = 0
+        df['delai_moyen_prise_en_charge_heures_n1'] = 0
+        df['cout_moyen_intervention_n1'] = 0
+        df['cout_total_intervention_n1'] = 0
+        df['duree_intervention_moyenne_heures_n1'] = 0
+        df['mttr_median_heures_n1'] = None
+        df['evolution_interventions'] = df['nb_interventions']
+    
+    return df
+
+
+@st.cache_data
+def get_taux_recurrence_equipement_action(annee):
+    """Calcule le taux de récurrence par combinaison équipement + action (filtre CURATIVE uniquement)"""
+    query = f"""
+    SELECT 
+        equipement_intervention as equipement,
+        action_intervention as action,
+        COUNT(*) as nb_interventions,
+        COUNT(DISTINCT id_site) as nb_sites_impactes,
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM interventions 
+                                    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+                                    AND categorie = 'CURATIVE'
+                                    AND equipement_intervention IS NOT NULL 
+                                    AND action_intervention IS NOT NULL), 2) as taux_pct
+    FROM interventions
+    WHERE CAST(strftime('%Y', date_creation_intervention) AS INTEGER) = {annee}
+    AND categorie = 'CURATIVE'
+    AND equipement_intervention IS NOT NULL
+    AND equipement_intervention != ''
+    AND action_intervention IS NOT NULL
+    AND action_intervention != ''
+    GROUP BY equipement_intervention, action_intervention
+    HAVING COUNT(*) > 1
+    ORDER BY nb_interventions DESC
+    """
+    df = load_data_from_db(query)
+    return df if df is not None and not df.empty else pd.DataFrame()
+
+
+@st.cache_data
+def get_statistiques_interventions_par_marques_onduleurs():
+    """Statistiques interventions par marques d'onduleurs (pivot avec actions en colonnes)"""
+    try:
+        # Récupérer les interventions pour onduleurs depuis la table interventions
+        query_interventions = """
+        SELECT 
+            id_site,
+            action_intervention
+        FROM interventions
+        WHERE equipement_intervention = 'Onduleur'
+        AND action_intervention IS NOT NULL
+        AND action_intervention != ''
+        """
+        df_interventions = load_data_from_db(query_interventions)
+        
+        if df_interventions is None or df_interventions.empty:
+            return pd.DataFrame()
+        
+        # Récupérer les marques d'onduleurs depuis onduleurs_perf
+        # La colonne s'appelle maintenant 'id_site' dans onduleurs_perf
+        query_onduleurs = """
+        SELECT 
+            id_site,
+            manufacturername
+        FROM onduleurs_perf
+        WHERE manufacturername IS NOT NULL
+        AND manufacturername != ''
+        """
+        df_onduleurs = load_data_from_db(query_onduleurs)
+        
+        if df_onduleurs is None or df_onduleurs.empty:
+            return pd.DataFrame()
+        
+        # Convertir id_site en string pour les deux DataFrames pour assurer la compatibilité
+        df_interventions['id_site'] = df_interventions['id_site'].astype(str)
+        df_onduleurs['id_site'] = df_onduleurs['id_site'].astype(str)
+        
+        # Joindre les deux DataFrames en Python
+        df_merged = df_interventions.merge(
+            df_onduleurs,
+            on='id_site',
+            how='inner'
+        )
+        
+        if df_merged.empty:
+            return pd.DataFrame()
+        
+        # Créer un pivot : manufacturername en lignes, action_intervention en colonnes
+        df_pivot = df_merged.pivot_table(
+            index='manufacturername',
+            columns='action_intervention',
+            values='id_site',
+            aggfunc='count',
+            fill_value=0
+        )
+        
+        # Réinitialiser l'index pour avoir manufacturername comme colonne
+        df_pivot = df_pivot.reset_index()
+        
+        # Renommer la colonne manufacturername
+        df_pivot.columns.name = None
+        
+        # Trier par manufacturername
+        df_pivot = df_pivot.sort_values('manufacturername')
+        
+        return df_pivot
+        
+    except Exception as e:
+        # Si la table onduleurs_perf n'existe pas ou erreur, retourner DataFrame vide
+        import traceback
+        print(f"Erreur dans get_statistiques_interventions_par_marques_onduleurs: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
+
+
+@st.cache_data
+def get_statistiques_interventions_par_modeles_onduleurs():
+    """Statistiques interventions par modèles d'onduleurs (pivot avec actions en colonnes)"""
+    try:
+        # Récupérer les interventions pour onduleurs depuis la table interventions
+        query_interventions = """
+        SELECT 
+            id_site,
+            action_intervention
+        FROM interventions
+        WHERE equipement_intervention = 'Onduleur'
+        AND action_intervention IS NOT NULL
+        AND action_intervention != ''
+        """
+        df_interventions = load_data_from_db(query_interventions)
+        
+        if df_interventions is None or df_interventions.empty:
+            return pd.DataFrame()
+        
+        # Récupérer les modèles d'onduleurs depuis onduleurs_perf
+        # La colonne s'appelle maintenant 'id_site' dans onduleurs_perf
+        query_onduleurs = """
+        SELECT 
+            id_site,
+            modelname
+        FROM onduleurs_perf
+        WHERE modelname IS NOT NULL
+        AND modelname != ''
+        """
+        df_onduleurs = load_data_from_db(query_onduleurs)
+        
+        if df_onduleurs is None or df_onduleurs.empty:
+            return pd.DataFrame()
+        
+        # Convertir id_site en string pour les deux DataFrames pour assurer la compatibilité
+        df_interventions['id_site'] = df_interventions['id_site'].astype(str)
+        df_onduleurs['id_site'] = df_onduleurs['id_site'].astype(str)
+        
+        # Joindre les deux DataFrames en Python
+        df_merged = df_interventions.merge(
+            df_onduleurs,
+            on='id_site',
+            how='inner'
+        )
+        
+        if df_merged.empty:
+            return pd.DataFrame()
+        
+        # Créer un pivot : modelname en lignes, action_intervention en colonnes
+        df_pivot = df_merged.pivot_table(
+            index='modelname',
+            columns='action_intervention',
+            values='id_site',
+            aggfunc='count',
+            fill_value=0
+        )
+        
+        # Réinitialiser l'index pour avoir modelname comme colonne
+        df_pivot = df_pivot.reset_index()
+        
+        # Renommer la colonne modelname
+        df_pivot.columns.name = None
+        
+        # Trier par modelname
+        df_pivot = df_pivot.sort_values('modelname')
+        
+        return df_pivot
+        
+    except Exception as e:
+        # Si la table onduleurs_perf n'existe pas ou erreur, retourner DataFrame vide
+        import traceback
+        print(f"Erreur dans get_statistiques_interventions_par_modeles_onduleurs: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
 
 
 def show_maintenance_view():
@@ -6431,6 +7112,59 @@ def show_maintenance_view():
                 
                 html_table += '</tr>'
             
+            # Calculer la ligne TOTAL avec moyenne pondérée par nombre d'interventions
+            html_table += '<tr style="background: rgba(15, 23, 42, 0.95); color: white; font-weight: 700;">'
+            html_table += '<td style="padding: 10px; border: 2px solid rgba(255,255,255,0.3); font-weight: 700;">TOTAL</td>'
+            
+            for sev in severites:
+                # Filtrer les données pour cette sévérité
+                df_sev = df_taux_zone_sev[df_taux_zone_sev['severite_categorie'] == sev]
+                
+                if not df_sev.empty and 'nb_total' in df_sev.columns:
+                    # Calculer moyenne pondérée : SUM(taux_resolution * nb_total) / SUM(nb_total)
+                    total_interventions = df_sev['nb_total'].sum()
+                    if total_interventions > 0:
+                        # Moyenne pondérée du taux de résolution
+                        taux_pondere = (df_sev['taux_resolution'] * df_sev['nb_total']).sum() / total_interventions
+                        
+                        # Valeurs N-1 si disponibles (moyenne pondérée par nb_total_n1)
+                        taux_pondere_n1 = None
+                        total_interventions_n1 = None
+                        if 'taux_resolution_n1' in df_sev.columns and 'nb_total_n1' in df_sev.columns:
+                            df_sev_n1 = df_sev[(df_sev['taux_resolution_n1'].notna()) & (df_sev['nb_total_n1'].notna())]
+                            if not df_sev_n1.empty:
+                                total_interventions_n1 = df_sev_n1['nb_total_n1'].sum()
+                                if total_interventions_n1 > 0:
+                                    # Moyenne pondérée N-1 : SUM(taux_resolution_n1 * nb_total_n1) / SUM(nb_total_n1)
+                                    taux_pondere_n1 = (df_sev_n1['taux_resolution_n1'] * df_sev_n1['nb_total_n1']).sum() / total_interventions_n1
+                        
+                        # Couleur selon le taux (rouge < 80%, orange 80-95%, vert >= 95%)
+                        if taux_pondere >= 95:
+                            color = '#10b981'
+                        elif taux_pondere >= 80:
+                            color = '#f59e0b'
+                        else:
+                            color = '#ef4444'
+                        
+                        # Construire le texte avec N-1
+                        texte_cellule = f'{taux_pondere:.1f}%'
+                        if taux_pondere_n1 is not None and not pd.isna(taux_pondere_n1):
+                            texte_cellule += f'<br><span style="font-size: 11px; color: rgba(255,255,255,0.8);">N-1: {taux_pondere_n1:.1f}%</span>'
+                        texte_cellule += f'<br><span style="font-size: 10px; color: rgba(255,255,255,0.7); font-weight: normal;">(n={int(total_interventions)}'
+                        if total_interventions_n1 is not None and not pd.isna(total_interventions_n1):
+                            texte_cellule += f' | {int(total_interventions_n1)})'
+                        else:
+                            texte_cellule += ')'
+                        texte_cellule += '</span>'
+                        
+                        html_table += f'<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: {color}; font-weight: 700;">{texte_cellule}</td>'
+                    else:
+                        html_table += '<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.5);">-</td>'
+                else:
+                    html_table += '<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.5);">-</td>'
+            
+            html_table += '</tr>'
+            
             html_table += '</tbody></table>'
             st.markdown(html_table, unsafe_allow_html=True)
         else:
@@ -6506,6 +7240,69 @@ def show_maintenance_view():
                         html_table += '<td style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); color: #9ca3af;">-</td>'
                 
                 html_table += '</tr>'
+            
+            # Calculer la ligne TOTAL avec moyenne pondérée par nombre d'interventions
+            html_table += '<tr style="background: rgba(15, 23, 42, 0.95); color: white; font-weight: 700;">'
+            html_table += '<td style="padding: 10px; border: 2px solid rgba(255,255,255,0.3); font-weight: 700;">TOTAL</td>'
+            
+            for sev in severites:
+                # Filtrer les données pour cette sévérité
+                df_sev = df_mttr_zone_sev[df_mttr_zone_sev['severite_categorie'] == sev]
+                
+                if not df_sev.empty and 'nb_interventions' in df_sev.columns:
+                    # Calculer moyenne pondérée : SUM(MTTR * nb_interventions) / SUM(nb_interventions)
+                    total_interventions = df_sev['nb_interventions'].sum()
+                    if total_interventions > 0:
+                        # Moyenne pondérée
+                        mttr_pondere = (df_sev['mttr_moyen_jours'] * df_sev['nb_interventions']).sum() / total_interventions
+                        
+                        # Médiane globale (médiane de toutes les médianes)
+                        mediane_ponderee = df_sev['mttr_median_jours'].median() if len(df_sev) > 0 else None
+                        
+                        # Valeurs N-1 si disponibles (moyenne pondérée par nb_interventions_n1)
+                        mttr_pondere_n1 = None
+                        mediane_ponderee_n1 = None
+                        if 'mttr_moyen_n1' in df_sev.columns and 'nb_interventions_n1' in df_sev.columns:
+                            df_sev_n1 = df_sev[(df_sev['mttr_moyen_n1'].notna()) & (df_sev['nb_interventions_n1'].notna())]
+                            if not df_sev_n1.empty:
+                                total_interventions_n1 = df_sev_n1['nb_interventions_n1'].sum()
+                                if total_interventions_n1 > 0:
+                                    # Moyenne pondérée N-1 : SUM(MTTR_N1 * nb_interventions_n1) / SUM(nb_interventions_n1)
+                                    mttr_pondere_n1 = (df_sev_n1['mttr_moyen_n1'] * df_sev_n1['nb_interventions_n1']).sum() / total_interventions_n1
+                                    if 'mttr_median_n1' in df_sev_n1.columns:
+                                        mediane_ponderee_n1 = df_sev_n1['mttr_median_n1'].median()
+                        
+                        # Affichage
+                        display_value = f"{mttr_pondere:.2f}j"
+                        median_text = ""
+                        if mediane_ponderee is not None and not pd.isna(mediane_ponderee):
+                            median_text = f" ({float(mediane_ponderee):.2f}j)"
+                        
+                        # Couleur selon le MTTR (vert < 7j, orange 7-30j, rouge > 30j)
+                        if mttr_pondere <= 7:
+                            color = '#10b981'
+                        elif mttr_pondere <= 30:
+                            color = '#f59e0b'
+                        else:
+                            color = '#ef4444'
+                        
+                        # Construire le texte avec N-1
+                        texte_cellule = f'{display_value}<span style="color: rgba(255,255,255,0.7); font-weight: normal;">{median_text}</span>'
+                        if mttr_pondere_n1 is not None and not pd.isna(mttr_pondere_n1):
+                            display_n1 = f"{mttr_pondere_n1:.2f}j"
+                            texte_cellule += f'<br><span style="font-size: 11px; color: rgba(255,255,255,0.8);">N-1: {display_n1}'
+                            if mediane_ponderee_n1 is not None and not pd.isna(mediane_ponderee_n1):
+                                median_n1_text = f" ({float(mediane_ponderee_n1):.2f}j)"
+                                texte_cellule += f'<span style="color: rgba(255,255,255,0.6);">{median_n1_text}</span>'
+                            texte_cellule += '</span>'
+                        
+                        html_table += f'<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: {color}; font-weight: 700;">{texte_cellule}</td>'
+                    else:
+                        html_table += '<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.5);">-</td>'
+                else:
+                    html_table += '<td style="padding: 10px; text-align: center; border: 2px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.5);">-</td>'
+            
+            html_table += '</tr>'
             
             html_table += '</tbody></table>'
             st.markdown(html_table, unsafe_allow_html=True)
@@ -7167,7 +7964,7 @@ def show_maintenance_view():
     st.markdown("<br>", unsafe_allow_html=True)
     
     # ============================================
-    # SECTION C: Coûts
+    # SECTION: Taux de Récurrence (CURATIVE uniquement)
     # ============================================
     st.markdown('''
     <div style="
@@ -7182,443 +7979,686 @@ def show_maintenance_view():
         backdrop-filter: blur(20px) saturate(160%);
         -webkit-backdrop-filter: blur(20px) saturate(160%);
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    ">💰 Coûts</div>
+    ">🔄 Taux de Récurrence (Interventions CURATIVES)</div>
     ''', unsafe_allow_html=True)
     
-    # M.14 & M.15 : Coût Total et Coût Moyen
-    col_m14, col_m15 = st.columns(2)
-    
-    with col_m14:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_mens = get_cout_maintenance_detail(annee_principale)
-        cout_total_2025 = get_kpi_cout_maintenance(annee_principale)
-        cout_total_2024 = get_kpi_cout_maintenance(2024)
-        
-        if not df_cout_mens.empty:
-            fig = px.bar(
-                df_cout_mens,
-                x='mois',
-                y='cout_total_k',
-                title=f'💰 Coût Total Maintenance ({cout_total_2025:.0f} k€ vs {cout_total_2024:.0f} k€ en 2024)',
-                labels={'mois': 'Mois', 'cout_total_k': 'Coût (k€)'},
-                color='cout_total_k',
-                color_continuous_scale='Reds'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col_m15:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_cat = get_cout_par_categorie(annee_principale)
-        if not df_cout_cat.empty:
-            fig = px.bar(
-                df_cout_cat,
-                x='categorie',
-                y='cout_moyen',
-                title='💶 Coût Moyen par Intervention',
-                labels={'categorie': 'Catégorie', 'cout_moyen': 'Coût moyen (€)'},
-                color='cout_moyen',
-                color_continuous_scale='Oranges',
-                text='cout_moyen'
-            )
-            fig.update_traces(texttemplate='%{text:.0f}€', textposition='outside')
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=350, showlegend=False, xaxis=dict(tickangle=-45))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # M.16 & M.18 : Coût par Site et Répartition par Type
-    col_m16, col_m18 = st.columns(2)
-    
-    with col_m16:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_site = get_cout_par_site(annee_principale)
-        if not df_cout_site.empty:
-            fig = px.bar(
-                df_cout_site.head(15),
-                x='cout_total_k',
-                y='nom_site',
-                orientation='h',
-                title='🏢 Coût par Site (Top 15)',
-                labels={'cout_total_k': 'Coût (k€)', 'nom_site': 'Site'},
-                color='cout_total_k',
-                color_continuous_scale='Reds'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col_m18:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_cout_type = get_cout_par_categorie(annee_principale)
-        if not df_cout_type.empty:
-            fig = px.pie(
-                df_cout_type,
-                values='cout_total_k',
-                names='categorie',
-                title='💳 Répartition Coûts par Type',
-                color_discrete_sequence=px.colors.qualitative.Set3
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # ============================================
-    # SECTION D: Disponibilité
-    # ============================================
+    # Taux de récurrence par équipement
     st.markdown('''
     <div style="
-        padding: 16px 24px;
-        margin: 2rem 0 1rem 0;
-        font-size: 1.3rem;
+        padding: 12px 20px;
+        margin: 1rem 0 0.5rem 0;
+        font-size: 1.1rem;
         font-weight: 600;
-        color: #1f2937;
-        background: rgba(255, 255, 255, 0.65);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 20px;
-        backdrop-filter: blur(20px) saturate(160%);
-        -webkit-backdrop-filter: blur(20px) saturate(160%);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    ">📈 Disponibilité</div>
+        color: #3b82f6;
+        background: rgba(59, 130, 246, 0.1);
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+    ">🔧 Taux de Récurrence par Équipement</div>
     ''', unsafe_allow_html=True)
     
-    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-    df_dispo_mens = get_disponibilite_mensuelle(annee_principale)
-    if not df_dispo_mens.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            name='Disponibilité Contractuelle',
-            x=df_dispo_mens['mois'],
-            y=df_dispo_mens['dispo_moyenne'],
-            mode='lines+markers',
-            line=dict(color='#10b981', width=3)
-        ))
-        fig.add_trace(go.Scatter(
-            name='Disponibilité Brute',
-            x=df_dispo_mens['mois'],
-            y=df_dispo_mens['dispo_brute_moyenne'],
-            mode='lines+markers',
-            line=dict(color='#0A84FF', width=3, dash='dash')
-        ))
-        fig.add_hline(y=98, line_dash="dash", line_color="green", annotation_text="Target 98%")
-        fig.update_layout(
-            title='📊 Disponibilité Contractuelle vs Brute',
-            xaxis_title='Mois',
-            yaxis_title='Disponibilité (%)',
-            height=400
-        )
-        fig = apply_glassmorphism_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
+    df_recurrence_equipement = get_taux_recurrence_equipement(annee_principale)
     
-    # ============================================
-    # SECTION E: Zone Mainteneur
-    # ============================================
-    st.markdown('''
-    <div style="
-        padding: 16px 24px;
-        margin: 2rem 0 1rem 0;
-        font-size: 1.3rem;
-        font-weight: 600;
-        color: #1f2937;
-        background: rgba(255, 255, 255, 0.65);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 20px;
-        backdrop-filter: blur(20px) saturate(160%);
-        -webkit-backdrop-filter: blur(20px) saturate(160%);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    ">🗺️ Zone Mainteneur</div>
-    ''', unsafe_allow_html=True)
-    
-    # KPI Global Interventions / 100 MW
-    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-    df_interv_100mw = get_interventions_par_100_mw(annee_principale)
-    if not df_interv_100mw.empty:
-        # KPI global
-        total_interv = df_interv_100mw['nb_interventions'].sum()
-        total_puissance = df_interv_100mw['puissance_mw'].sum()
-        global_interv_100mw = (total_interv / total_puissance * 100) if total_puissance > 0 else 0
+    if not df_recurrence_equipement.empty:
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #1f2937; margin-bottom: 16px;">📋 Détails Équipements (Comparatif {annee_principale} vs {annee_principale - 1})</h4>', unsafe_allow_html=True)
         
-        col_kpi1, col_kpi2 = st.columns(2)
-        with col_kpi1:
-            st.metric(
-                label="Interventions / 100 MW (Global)",
-                value=f"{global_interv_100mw:.1f}",
-                delta=None
-            )
-        with col_kpi2:
-            df_delai_median = get_delai_median_prise_en_charge(annee_principale)
-            if not df_delai_median.empty:
-                median_global = df_delai_median['delai_median_heures'].median()
-                st.metric(
-                    label="Délai Médian Prise en Charge",
-                    value=f"{median_global:.1f}h",
-                    delta=None
-                )
+        # Créer une copie pour l'affichage avec formatage N-1
+        df_display = df_recurrence_equipement.copy()
         
-        # Graphique Interventions / 100 MW par zone
-        st.markdown("<br>", unsafe_allow_html=True)
-        df_zones = df_interv_100mw[df_interv_100mw['zone_mainteneur'] != 'Total'].head(10)
-        if not df_zones.empty:
-            fig = px.bar(
-                df_zones,
-                x='interventions_par_100mw',
-                y='zone_mainteneur',
-                orientation='h',
-                title='📊 Interventions / 100 MW par Zone Mainteneur',
-                labels={'interventions_par_100mw': 'Interventions / 100 MW', 'zone_mainteneur': 'Zone'},
-                color='interventions_par_100mw',
-                color_continuous_scale='Reds'
+        # Fonction générique pour formater une valeur avec comparaison N-1 en pourcentage
+        def format_with_n1(val, val_n1, format_type='int'):
+            if pd.isna(val) or val is None:
+                val = 0
+            if pd.isna(val_n1) or val_n1 is None:
+                val_n1 = 0
+            
+            # Formatage de la valeur N
+            if format_type == 'int':
+                val_str = f"{int(val):,}"
+            elif format_type == 'float2':
+                val_str = f"{float(val):.2f}"
+            else:
+                val_str = f"{float(val):.2f}"
+            
+            # Calculer la variation en pourcentage (basée sur N-1)
+            if val_n1 != 0:
+                variation_pct = ((val - val_n1) / val_n1) * 100
+            else:
+                variation_pct = 100 if val > 0 else 0
+            
+            # Formater la variation en pourcentage (sans afficher N-1 en %)
+            if variation_pct > 0:
+                return f"{val_str} (+{variation_pct:.1f}%)"
+            elif variation_pct < 0:
+                return f"{val_str} ({variation_pct:.1f}%)"
+            else:
+                return f"{val_str} (=)"
+        
+        # Formater toutes les colonnes avec comparaison N-1
+        if 'nb_interventions_n1' in df_display.columns:
+            df_display['nb_interventions_display'] = df_display.apply(
+                lambda row: format_with_n1(row['nb_interventions'], row['nb_interventions_n1'], 'int'), axis=1
             )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Aucune donnée disponible")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Tableau complet KPIs par Zone
-    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-    df_zones_kpis = get_kpis_par_zone_mainteneur(annee_principale)
-    if not df_zones_kpis.empty:
-        st.markdown('<h4 style="color: #1f2937; margin-bottom: 16px;">KPIs Complets par Zone Mainteneur</h4>', unsafe_allow_html=True)
+        if 'nb_sites_impactes_n1' in df_display.columns:
+            df_display['nb_sites_impactes_display'] = df_display.apply(
+                lambda row: format_with_n1(row['nb_sites_impactes'], row['nb_sites_impactes_n1'], 'int'), axis=1
+            )
+        if 'taux_pct_n1' in df_display.columns:
+            df_display['taux_pct_display'] = df_display.apply(
+                lambda row: format_with_n1(row['taux_pct'], row['taux_pct_n1'], 'float2'), axis=1
+            )
+        if 'recurrence_moyenne_par_site_n1' in df_display.columns:
+            df_display['recurrence_moyenne_par_site_display'] = df_display.apply(
+                lambda row: format_with_n1(row['recurrence_moyenne_par_site'], row['recurrence_moyenne_par_site_n1'], 'float2'), axis=1
+            )
+        if 'delai_moyen_prise_en_charge_heures_n1' in df_display.columns:
+            df_display['delai_moyen_prise_en_charge_heures_display'] = df_display.apply(
+                lambda row: format_with_n1(row['delai_moyen_prise_en_charge_heures'], row['delai_moyen_prise_en_charge_heures_n1'], 'float2'), axis=1
+            )
+        if 'cout_moyen_intervention_n1' in df_display.columns:
+            df_display['cout_moyen_intervention_display'] = df_display.apply(
+                lambda row: format_with_n1(row['cout_moyen_intervention'], row['cout_moyen_intervention_n1'], 'float2'), axis=1
+            )
+        if 'cout_total_intervention_n1' in df_display.columns:
+            df_display['cout_total_intervention_display'] = df_display.apply(
+                lambda row: format_with_n1(row['cout_total_intervention'], row['cout_total_intervention_n1'], 'float2'), axis=1
+            )
+        if 'duree_intervention_moyenne_heures_n1' in df_display.columns:
+            df_display['duree_intervention_moyenne_heures_display'] = df_display.apply(
+                lambda row: format_with_n1(row['duree_intervention_moyenne_heures'], row['duree_intervention_moyenne_heures_n1'], 'float2'), axis=1
+            )
+        if 'mttr_median_heures_n1' in df_display.columns:
+            def format_mttr_n1(row):
+                val = row['mttr_median_heures'] if not pd.isna(row['mttr_median_heures']) else None
+                val_n1 = row['mttr_median_heures_n1'] if not pd.isna(row['mttr_median_heures_n1']) else None
+                if val is None and val_n1 is None:
+                    return "N/A"
+                if val is None:
+                    return f"N/A"
+                if val_n1 is None:
+                    return f"{val:.2f}"
+                # Gérer les cas de division par zéro
+                val = float(val) if val is not None else 0
+                val_n1 = float(val_n1) if val_n1 is not None else 0
+                
+                # Calculer la variation en pourcentage (basée sur N-1)
+                if val_n1 != 0:
+                    variation_pct = ((val - val_n1) / val_n1) * 100
+                else:
+                    variation_pct = 100 if val > 0 else 0
+                
+                # Formater la variation en pourcentage (sans afficher N-1 en %)
+                if variation_pct > 0:
+                    return f"{val:.2f} (+{variation_pct:.1f}%)"
+                elif variation_pct < 0:
+                    return f"{val:.2f} ({variation_pct:.1f}%)"
+                else:
+                    return f"{val:.2f} (=)"
+            df_display['mttr_median_heures_display'] = df_display.apply(format_mttr_n1, axis=1)
+        
+        # Masquer les colonnes N-1 et les colonnes originales de l'affichage
+        cols_to_hide = ['nb_interventions_n1', 'evolution_interventions', 'nb_interventions', 
+                        'nb_sites_impactes', 'taux_pct', 'recurrence_moyenne_par_site',
+                        'delai_moyen_prise_en_charge_heures', 'cout_moyen_intervention',
+                        'cout_total_intervention', 'duree_intervention_moyenne_heures', 'mttr_median_heures',
+                        'nb_sites_impactes_n1', 'taux_pct_n1', 'recurrence_moyenne_par_site_n1',
+                        'delai_moyen_prise_en_charge_heures_n1', 'cout_moyen_intervention_n1',
+                        'cout_total_intervention_n1', 'duree_intervention_moyenne_heures_n1', 'mttr_median_heures_n1']
+        cols_to_display = [col for col in df_display.columns if col not in cols_to_hide]
+        
+        # Réordonner les colonnes
+        cols_order = ['equipement']
+        if 'nb_interventions_display' in df_display.columns:
+            cols_order.append('nb_interventions_display')
+        if 'nb_sites_impactes_display' in df_display.columns:
+            cols_order.append('nb_sites_impactes_display')
+        if 'taux_pct_display' in df_display.columns:
+            cols_order.append('taux_pct_display')
+        if 'recurrence_moyenne_par_site_display' in df_display.columns:
+            cols_order.append('recurrence_moyenne_par_site_display')
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display.columns:
+            cols_order.append('delai_moyen_prise_en_charge_heures_display')
+        if 'cout_moyen_intervention_display' in df_display.columns:
+            cols_order.append('cout_moyen_intervention_display')
+        if 'cout_total_intervention_display' in df_display.columns:
+            cols_order.append('cout_total_intervention_display')
+        if 'duree_intervention_moyenne_heures_display' in df_display.columns:
+            cols_order.append('duree_intervention_moyenne_heures_display')
+        if 'mttr_median_heures_display' in df_display.columns:
+            cols_order.append('mttr_median_heures_display')
+        
+        df_display = df_display[cols_order]
+        
+        # Calculer la hauteur précise pour afficher toutes les lignes sans scroll ni lignes vides
+        # Réduire légèrement la hauteur pour éviter que Streamlit ajoute des lignes vides
+        nb_lignes = len(df_display)
+        # Formule ajustée : header + (nb_lignes × hauteur_ligne) - ajustement pour éviter lignes vides
+        hauteur_header = 48
+        hauteur_ligne = 33  # Hauteur par ligne réduite pour éviter les lignes vides
+        hauteur_tableau = hauteur_header + (nb_lignes * hauteur_ligne)
+        
+        # Ajustement final : réduire de 2% pour forcer l'affichage exact sans lignes vides
+        hauteur_tableau = int(hauteur_tableau * 0.98)
+        
+        # S'assurer d'avoir au moins 300px de hauteur minimale
+        hauteur_tableau = max(300, hauteur_tableau)
+        
+        # Configuration des colonnes avec les colonnes formatées
+        column_config_dict = {
+            "equipement": "Équipement",
+        }
+        if 'nb_interventions_display' in df_display.columns:
+            column_config_dict["nb_interventions_display"] = st.column_config.TextColumn("Nb Interventions (vs N-1)")
+        if 'nb_sites_impactes_display' in df_display.columns:
+            column_config_dict["nb_sites_impactes_display"] = st.column_config.TextColumn("Nb Sites (vs N-1)")
+        if 'taux_pct_display' in df_display.columns:
+            column_config_dict["taux_pct_display"] = st.column_config.TextColumn("Taux % (vs N-1)")
+        if 'recurrence_moyenne_par_site_display' in df_display.columns:
+            column_config_dict["recurrence_moyenne_par_site_display"] = st.column_config.TextColumn("Récurrence Moy/Site (vs N-1)")
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display.columns:
+            column_config_dict["delai_moyen_prise_en_charge_heures_display"] = st.column_config.TextColumn("Délai Moyen Prise Charge (h) (vs N-1)")
+        if 'cout_moyen_intervention_display' in df_display.columns:
+            column_config_dict["cout_moyen_intervention_display"] = st.column_config.TextColumn("Coût Moyen (€) (vs N-1)")
+        if 'cout_total_intervention_display' in df_display.columns:
+            column_config_dict["cout_total_intervention_display"] = st.column_config.TextColumn("Coût Total (€) (vs N-1)")
+        if 'duree_intervention_moyenne_heures_display' in df_display.columns:
+            column_config_dict["duree_intervention_moyenne_heures_display"] = st.column_config.TextColumn("Durée Moyenne (h) (vs N-1)")
+        if 'mttr_median_heures_display' in df_display.columns:
+            column_config_dict["mttr_median_heures_display"] = st.column_config.TextColumn("MTTR Médian (h) (vs N-1)")
+        
         st.dataframe(
-            df_zones_kpis,
-            column_config={
-                "zone_mainteneur": "Zone",
-                "nb_sites": "Nb Sites",
-                "nb_interventions": "Nb Interv.",
-                "interventions_par_site": st.column_config.NumberColumn("Interv./Site", format="%.1f"),
-                "delai_moyen_prise_en_charge_heures": st.column_config.NumberColumn("Délai Prise Charge (h)", format="%.1f"),
-                "mttr_heures": st.column_config.NumberColumn("MTTR (h)", format="%.2f"),
-                "delai_moyen_cloture_jours": st.column_config.NumberColumn("Délai Clôture (j)", format="%.1f"),
-                "cout_total_k": st.column_config.NumberColumn("Coût Total (k€)", format="%.0f"),
-                "cout_par_site_k": st.column_config.NumberColumn("Coût/Site (k€)", format="%.1f"),
-                "taux_resolution_pct": st.column_config.NumberColumn("Taux Résolution (%)", format="%.1f"),
-                "sla_7j_pct": st.column_config.NumberColumn("SLA ≤7j (%)", format="%.1f"),
-                "sla_30j_pct": st.column_config.NumberColumn("SLA ≤30j (%)", format="%.1f")
-            },
+            df_display,
+            column_config=column_config_dict,
             hide_index=True,
             use_container_width=True,
-            height=500
+            height=hauteur_tableau
         )
+        st.markdown('</div>', unsafe_allow_html=True)
     else:
-        st.info("Aucune donnée disponible")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Top Motifs et Top Sites Curatifs
-    col_motifs, col_sites = st.columns(2)
-    
-    with col_motifs:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_top_motifs = get_top_motifs_interventions(annee_principale, limit=10)
-        if not df_top_motifs.empty:
-            fig = px.bar(
-                df_top_motifs.head(10),
-                x='nb_interventions',
-                y='motif',
-                orientation='h',
-                title='🏷️ Top 10 Motifs d\'Interventions',
-                labels={'nb_interventions': 'Nb Interventions', 'motif': 'Motif'},
-                color='nb_interventions',
-                color_continuous_scale='Blues'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col_sites:
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_top_sites = get_top_sites_curatif_par_mw(annee_principale, limit=15)
-        if not df_top_sites.empty:
-            fig = px.bar(
-                df_top_sites.head(15),
-                x='curatif_par_100mw',
-                y='nom_site',
-                orientation='h',
-                title='⚠️ Top 15 Sites Curatifs / 100 MW',
-                labels={'curatif_par_100mw': 'Curatif / 100 MW', 'nom_site': 'Site'},
-                color='curatif_par_100mw',
-                color_continuous_scale='Oranges'
-            )
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=500, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Aucune donnée disponible")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.info("Aucune donnée de récurrence disponible pour les équipements (interventions CURATIVES)")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # SECTION F: Analyses par SPV (spv_metrics_2025)
+    # ============================================
+    # TABLEAU: Détails Actions (Comparatif 2025 vs 2024)
+    # ============================================
+    df_recurrence_action_complet = get_taux_recurrence_action_complet(annee_principale)
+    
+    if not df_recurrence_action_complet.empty:
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #1f2937; margin-bottom: 16px;">📋 Détails Actions (Comparatif {annee_principale} vs {annee_principale - 1})</h4>', unsafe_allow_html=True)
+        
+        # Créer une copie pour l'affichage avec formatage N-1
+        df_display_action = df_recurrence_action_complet.copy()
+        
+        # Fonction générique pour formater une valeur avec comparaison N-1 en pourcentage
+        def format_with_n1(val, val_n1, format_type='int'):
+            if pd.isna(val) or val is None:
+                val = 0
+            if pd.isna(val_n1) or val_n1 is None:
+                val_n1 = 0
+            
+            # Formatage de la valeur N
+            if format_type == 'int':
+                val_str = f"{int(val):,}"
+            elif format_type == 'float2':
+                val_str = f"{float(val):.2f}"
+            else:
+                val_str = f"{float(val):.2f}"
+            
+            # Calculer la variation en pourcentage (basée sur N-1)
+            if val_n1 != 0:
+                variation_pct = ((val - val_n1) / val_n1) * 100
+            else:
+                variation_pct = 100 if val > 0 else 0
+            
+            # Formater la variation en pourcentage (sans afficher N-1 en %)
+            if variation_pct > 0:
+                return f"{val_str} (+{variation_pct:.1f}%)"
+            elif variation_pct < 0:
+                return f"{val_str} ({variation_pct:.1f}%)"
+            else:
+                return f"{val_str} (=)"
+        
+        # Formater toutes les colonnes avec comparaison N-1
+        if 'nb_interventions_n1' in df_display_action.columns:
+            df_display_action['nb_interventions_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['nb_interventions'], row['nb_interventions_n1'], 'int'), axis=1
+            )
+        if 'nb_sites_impactes_n1' in df_display_action.columns:
+            df_display_action['nb_sites_impactes_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['nb_sites_impactes'], row['nb_sites_impactes_n1'], 'int'), axis=1
+            )
+        if 'taux_pct_n1' in df_display_action.columns:
+            df_display_action['taux_pct_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['taux_pct'], row['taux_pct_n1'], 'float2'), axis=1
+            )
+        if 'recurrence_moyenne_par_site_n1' in df_display_action.columns:
+            df_display_action['recurrence_moyenne_par_site_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['recurrence_moyenne_par_site'], row['recurrence_moyenne_par_site_n1'], 'float2'), axis=1
+            )
+        if 'delai_moyen_prise_en_charge_heures_n1' in df_display_action.columns:
+            df_display_action['delai_moyen_prise_en_charge_heures_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['delai_moyen_prise_en_charge_heures'], row['delai_moyen_prise_en_charge_heures_n1'], 'float2'), axis=1
+            )
+        if 'cout_moyen_intervention_n1' in df_display_action.columns:
+            df_display_action['cout_moyen_intervention_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['cout_moyen_intervention'], row['cout_moyen_intervention_n1'], 'float2'), axis=1
+            )
+        if 'cout_total_intervention_n1' in df_display_action.columns:
+            df_display_action['cout_total_intervention_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['cout_total_intervention'], row['cout_total_intervention_n1'], 'float2'), axis=1
+            )
+        if 'duree_intervention_moyenne_heures_n1' in df_display_action.columns:
+            df_display_action['duree_intervention_moyenne_heures_display'] = df_display_action.apply(
+                lambda row: format_with_n1(row['duree_intervention_moyenne_heures'], row['duree_intervention_moyenne_heures_n1'], 'float2'), axis=1
+            )
+        if 'mttr_median_heures_n1' in df_display_action.columns:
+            def format_mttr_n1(row):
+                val = row['mttr_median_heures'] if not pd.isna(row['mttr_median_heures']) else None
+                val_n1 = row['mttr_median_heures_n1'] if not pd.isna(row['mttr_median_heures_n1']) else None
+                if val is None and val_n1 is None:
+                    return "N/A"
+                if val is None:
+                    return f"N/A"
+                if val_n1 is None:
+                    return f"{val:.2f}"
+                # Gérer les cas de division par zéro
+                val = float(val) if val is not None else 0
+                val_n1 = float(val_n1) if val_n1 is not None else 0
+                
+                # Calculer la variation en pourcentage (basée sur N-1)
+                if val_n1 != 0:
+                    variation_pct = ((val - val_n1) / val_n1) * 100
+                else:
+                    variation_pct = 100 if val > 0 else 0
+                
+                # Formater la variation en pourcentage (sans afficher N-1 en %)
+                if variation_pct > 0:
+                    return f"{val:.2f} (+{variation_pct:.1f}%)"
+                elif variation_pct < 0:
+                    return f"{val:.2f} ({variation_pct:.1f}%)"
+                else:
+                    return f"{val:.2f} (=)"
+            df_display_action['mttr_median_heures_display'] = df_display_action.apply(format_mttr_n1, axis=1)
+        
+        # Masquer les colonnes N-1 et les colonnes originales de l'affichage
+        cols_to_hide = ['nb_interventions_n1', 'evolution_interventions', 'nb_interventions', 
+                        'nb_sites_impactes', 'taux_pct', 'recurrence_moyenne_par_site',
+                        'delai_moyen_prise_en_charge_heures', 'cout_moyen_intervention',
+                        'cout_total_intervention', 'duree_intervention_moyenne_heures', 'mttr_median_heures',
+                        'nb_sites_impactes_n1', 'taux_pct_n1', 'recurrence_moyenne_par_site_n1',
+                        'delai_moyen_prise_en_charge_heures_n1', 'cout_moyen_intervention_n1',
+                        'cout_total_intervention_n1', 'duree_intervention_moyenne_heures_n1', 'mttr_median_heures_n1']
+        cols_to_display = [col for col in df_display_action.columns if col not in cols_to_hide]
+        
+        # Réordonner les colonnes
+        cols_order = ['action']
+        if 'nb_interventions_display' in df_display_action.columns:
+            cols_order.append('nb_interventions_display')
+        if 'nb_sites_impactes_display' in df_display_action.columns:
+            cols_order.append('nb_sites_impactes_display')
+        if 'taux_pct_display' in df_display_action.columns:
+            cols_order.append('taux_pct_display')
+        if 'recurrence_moyenne_par_site_display' in df_display_action.columns:
+            cols_order.append('recurrence_moyenne_par_site_display')
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display_action.columns:
+            cols_order.append('delai_moyen_prise_en_charge_heures_display')
+        if 'cout_moyen_intervention_display' in df_display_action.columns:
+            cols_order.append('cout_moyen_intervention_display')
+        if 'cout_total_intervention_display' in df_display_action.columns:
+            cols_order.append('cout_total_intervention_display')
+        if 'duree_intervention_moyenne_heures_display' in df_display_action.columns:
+            cols_order.append('duree_intervention_moyenne_heures_display')
+        if 'mttr_median_heures_display' in df_display_action.columns:
+            cols_order.append('mttr_median_heures_display')
+        
+        df_display_action = df_display_action[cols_order]
+        
+        # Calculer la hauteur précise pour afficher toutes les lignes sans scroll ni lignes vides
+        # Réduire légèrement la hauteur pour éviter que Streamlit ajoute des lignes vides
+        nb_lignes = len(df_display_action)
+        # Formule ajustée : header + (nb_lignes × hauteur_ligne) - ajustement pour éviter lignes vides
+        hauteur_header = 48
+        hauteur_ligne = 33  # Hauteur par ligne réduite pour éviter les lignes vides
+        hauteur_tableau = hauteur_header + (nb_lignes * hauteur_ligne)
+        
+        # Ajustement final : réduire de 2% pour forcer l'affichage exact sans lignes vides
+        hauteur_tableau = int(hauteur_tableau * 0.98)
+        
+        # S'assurer d'avoir au moins 300px de hauteur minimale
+        hauteur_tableau = max(300, hauteur_tableau)
+        
+        # Configuration des colonnes avec les colonnes formatées
+        column_config_dict = {
+            "action": "Action",
+        }
+        if 'nb_interventions_display' in df_display_action.columns:
+            column_config_dict["nb_interventions_display"] = st.column_config.TextColumn("Nb Interventions (vs N-1)")
+        if 'nb_sites_impactes_display' in df_display_action.columns:
+            column_config_dict["nb_sites_impactes_display"] = st.column_config.TextColumn("Nb Sites (vs N-1)")
+        if 'taux_pct_display' in df_display_action.columns:
+            column_config_dict["taux_pct_display"] = st.column_config.TextColumn("Taux % (vs N-1)")
+        if 'recurrence_moyenne_par_site_display' in df_display_action.columns:
+            column_config_dict["recurrence_moyenne_par_site_display"] = st.column_config.TextColumn("Récurrence Moy/Site (vs N-1)")
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display_action.columns:
+            column_config_dict["delai_moyen_prise_en_charge_heures_display"] = st.column_config.TextColumn("Délai Moyen Prise Charge (h) (vs N-1)")
+        if 'cout_moyen_intervention_display' in df_display_action.columns:
+            column_config_dict["cout_moyen_intervention_display"] = st.column_config.TextColumn("Coût Moyen (€) (vs N-1)")
+        if 'cout_total_intervention_display' in df_display_action.columns:
+            column_config_dict["cout_total_intervention_display"] = st.column_config.TextColumn("Coût Total (€) (vs N-1)")
+        if 'duree_intervention_moyenne_heures_display' in df_display_action.columns:
+            column_config_dict["duree_intervention_moyenne_heures_display"] = st.column_config.TextColumn("Durée Moyenne (h) (vs N-1)")
+        if 'mttr_median_heures_display' in df_display_action.columns:
+            column_config_dict["mttr_median_heures_display"] = st.column_config.TextColumn("MTTR Médian (h) (vs N-1)")
+        
+        st.dataframe(
+            df_display_action,
+            column_config=column_config_dict,
+            hide_index=True,
+            use_container_width=True,
+            height=hauteur_tableau
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Aucune donnée de récurrence disponible pour les actions (interventions CURATIVES)")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Taux de récurrence par combinaison équipement + action
+    st.markdown('''
+    <div style="
+        padding: 12px 20px;
+        margin: 1rem 0 0.5rem 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #f59e0b;
+        background: rgba(245, 158, 11, 0.1);
+        border-left: 4px solid #f59e0b;
+        border-radius: 8px;
+    ">🔗 Taux de Récurrence par Combinaison (Équipement + Action)</div>
+    ''', unsafe_allow_html=True)
+    
+    df_recurrence_combo = get_taux_recurrence_equipement_action_complet(annee_principale)
+    
+    if not df_recurrence_combo.empty:
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #1f2937; margin-bottom: 16px;">📊 Top 30 Combinaisons les Plus Récurrentes (Comparatif {annee_principale} vs {annee_principale - 1})</h4>', unsafe_allow_html=True)
+        
+        # Créer une copie pour l'affichage avec formatage N-1
+        df_display_combo = df_recurrence_combo.head(30).copy()
+        
+        # Fonction générique pour formater une valeur avec comparaison N-1 en pourcentage
+        def format_with_n1(val, val_n1, format_type='int'):
+            if pd.isna(val) or val is None:
+                val = 0
+            if pd.isna(val_n1) or val_n1 is None:
+                val_n1 = 0
+            
+            # Formatage de la valeur N
+            if format_type == 'int':
+                val_str = f"{int(val):,}"
+            elif format_type == 'float2':
+                val_str = f"{float(val):.2f}"
+            else:
+                val_str = f"{float(val):.2f}"
+            
+            # Calculer la variation en pourcentage (basée sur N-1)
+            if val_n1 != 0:
+                variation_pct = ((val - val_n1) / val_n1) * 100
+            else:
+                variation_pct = 100 if val > 0 else 0
+            
+            # Formater la variation en pourcentage (sans afficher N-1 en %)
+            if variation_pct > 0:
+                return f"{val_str} (+{variation_pct:.1f}%)"
+            elif variation_pct < 0:
+                return f"{val_str} ({variation_pct:.1f}%)"
+            else:
+                return f"{val_str} (=)"
+        
+        # Formater toutes les colonnes avec comparaison N-1
+        if 'nb_interventions_n1' in df_display_combo.columns:
+            df_display_combo['nb_interventions_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['nb_interventions'], row['nb_interventions_n1'], 'int'), axis=1
+            )
+        if 'nb_sites_impactes_n1' in df_display_combo.columns:
+            df_display_combo['nb_sites_impactes_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['nb_sites_impactes'], row['nb_sites_impactes_n1'], 'int'), axis=1
+            )
+        if 'taux_pct_n1' in df_display_combo.columns:
+            df_display_combo['taux_pct_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['taux_pct'], row['taux_pct_n1'], 'float2'), axis=1
+            )
+        if 'recurrence_moyenne_par_site_n1' in df_display_combo.columns:
+            df_display_combo['recurrence_moyenne_par_site_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['recurrence_moyenne_par_site'], row['recurrence_moyenne_par_site_n1'], 'float2'), axis=1
+            )
+        if 'delai_moyen_prise_en_charge_heures_n1' in df_display_combo.columns:
+            df_display_combo['delai_moyen_prise_en_charge_heures_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['delai_moyen_prise_en_charge_heures'], row['delai_moyen_prise_en_charge_heures_n1'], 'float2'), axis=1
+            )
+        if 'cout_moyen_intervention_n1' in df_display_combo.columns:
+            df_display_combo['cout_moyen_intervention_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['cout_moyen_intervention'], row['cout_moyen_intervention_n1'], 'float2'), axis=1
+            )
+        if 'cout_total_intervention_n1' in df_display_combo.columns:
+            df_display_combo['cout_total_intervention_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['cout_total_intervention'], row['cout_total_intervention_n1'], 'float2'), axis=1
+            )
+        if 'duree_intervention_moyenne_heures_n1' in df_display_combo.columns:
+            df_display_combo['duree_intervention_moyenne_heures_display'] = df_display_combo.apply(
+                lambda row: format_with_n1(row['duree_intervention_moyenne_heures'], row['duree_intervention_moyenne_heures_n1'], 'float2'), axis=1
+            )
+        if 'mttr_median_heures_n1' in df_display_combo.columns:
+            def format_mttr_n1(row):
+                val = row['mttr_median_heures'] if not pd.isna(row['mttr_median_heures']) else None
+                val_n1 = row['mttr_median_heures_n1'] if not pd.isna(row['mttr_median_heures_n1']) else None
+                if val is None and val_n1 is None:
+                    return "N/A"
+                if val is None:
+                    return f"N/A"
+                if val_n1 is None:
+                    return f"{val:.2f}"
+                # Gérer les cas de division par zéro
+                val = float(val) if val is not None else 0
+                val_n1 = float(val_n1) if val_n1 is not None else 0
+                
+                # Calculer la variation en pourcentage (basée sur N-1)
+                if val_n1 != 0:
+                    variation_pct = ((val - val_n1) / val_n1) * 100
+                else:
+                    variation_pct = 100 if val > 0 else 0
+                
+                # Formater la variation en pourcentage (sans afficher N-1 en %)
+                if variation_pct > 0:
+                    return f"{val:.2f} (+{variation_pct:.1f}%)"
+                elif variation_pct < 0:
+                    return f"{val:.2f} ({variation_pct:.1f}%)"
+                else:
+                    return f"{val:.2f} (=)"
+            df_display_combo['mttr_median_heures_display'] = df_display_combo.apply(format_mttr_n1, axis=1)
+        
+        # Masquer les colonnes N-1 et les colonnes originales de l'affichage
+        cols_to_hide = ['nb_interventions_n1', 'evolution_interventions', 'nb_interventions', 
+                        'nb_sites_impactes', 'taux_pct', 'recurrence_moyenne_par_site',
+                        'delai_moyen_prise_en_charge_heures', 'cout_moyen_intervention',
+                        'cout_total_intervention', 'duree_intervention_moyenne_heures', 'mttr_median_heures',
+                        'nb_sites_impactes_n1', 'taux_pct_n1', 'recurrence_moyenne_par_site_n1',
+                        'delai_moyen_prise_en_charge_heures_n1', 'cout_moyen_intervention_n1',
+                        'cout_total_intervention_n1', 'duree_intervention_moyenne_heures_n1', 'mttr_median_heures_n1']
+        cols_to_display = [col for col in df_display_combo.columns if col not in cols_to_hide]
+        
+        # Réordonner les colonnes
+        cols_order = ['equipement', 'action']
+        if 'nb_interventions_display' in df_display_combo.columns:
+            cols_order.append('nb_interventions_display')
+        if 'nb_sites_impactes_display' in df_display_combo.columns:
+            cols_order.append('nb_sites_impactes_display')
+        if 'taux_pct_display' in df_display_combo.columns:
+            cols_order.append('taux_pct_display')
+        if 'recurrence_moyenne_par_site_display' in df_display_combo.columns:
+            cols_order.append('recurrence_moyenne_par_site_display')
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display_combo.columns:
+            cols_order.append('delai_moyen_prise_en_charge_heures_display')
+        if 'cout_moyen_intervention_display' in df_display_combo.columns:
+            cols_order.append('cout_moyen_intervention_display')
+        if 'cout_total_intervention_display' in df_display_combo.columns:
+            cols_order.append('cout_total_intervention_display')
+        if 'duree_intervention_moyenne_heures_display' in df_display_combo.columns:
+            cols_order.append('duree_intervention_moyenne_heures_display')
+        if 'mttr_median_heures_display' in df_display_combo.columns:
+            cols_order.append('mttr_median_heures_display')
+        
+        df_display_combo = df_display_combo[cols_order]
+        
+        # Calculer la hauteur précise pour afficher toutes les lignes sans scroll ni lignes vides
+        nb_lignes = len(df_display_combo)
+        hauteur_header = 48
+        hauteur_ligne = 33
+        hauteur_tableau = hauteur_header + (nb_lignes * hauteur_ligne)
+        hauteur_tableau = int(hauteur_tableau * 0.98)
+        hauteur_tableau = max(300, hauteur_tableau)
+        
+        # Configuration des colonnes avec les colonnes formatées
+        column_config_dict = {
+            "equipement": "Équipement",
+            "action": "Action",
+        }
+        if 'nb_interventions_display' in df_display_combo.columns:
+            column_config_dict["nb_interventions_display"] = st.column_config.TextColumn("Nb Interventions (vs N-1)")
+        if 'nb_sites_impactes_display' in df_display_combo.columns:
+            column_config_dict["nb_sites_impactes_display"] = st.column_config.TextColumn("Nb Sites (vs N-1)")
+        if 'taux_pct_display' in df_display_combo.columns:
+            column_config_dict["taux_pct_display"] = st.column_config.TextColumn("Taux % (vs N-1)")
+        if 'recurrence_moyenne_par_site_display' in df_display_combo.columns:
+            column_config_dict["recurrence_moyenne_par_site_display"] = st.column_config.TextColumn("Récurrence Moy/Site (vs N-1)")
+        if 'delai_moyen_prise_en_charge_heures_display' in df_display_combo.columns:
+            column_config_dict["delai_moyen_prise_en_charge_heures_display"] = st.column_config.TextColumn("Délai Moyen Prise Charge (h) (vs N-1)")
+        if 'cout_moyen_intervention_display' in df_display_combo.columns:
+            column_config_dict["cout_moyen_intervention_display"] = st.column_config.TextColumn("Coût Moyen (€) (vs N-1)")
+        if 'cout_total_intervention_display' in df_display_combo.columns:
+            column_config_dict["cout_total_intervention_display"] = st.column_config.TextColumn("Coût Total (€) (vs N-1)")
+        if 'duree_intervention_moyenne_heures_display' in df_display_combo.columns:
+            column_config_dict["duree_intervention_moyenne_heures_display"] = st.column_config.TextColumn("Durée Moyenne (h) (vs N-1)")
+        if 'mttr_median_heures_display' in df_display_combo.columns:
+            column_config_dict["mttr_median_heures_display"] = st.column_config.TextColumn("MTTR Médian (h) (vs N-1)")
+        
+        st.dataframe(
+            df_display_combo,
+            column_config=column_config_dict,
+            hide_index=True,
+            use_container_width=True,
+            height=hauteur_tableau
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Aucune donnée de récurrence disponible pour les combinaisons équipement + action (interventions CURATIVES)")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ============================================
+    # TABLEAU: Statistiques interventions par marques onduleurs
     # ============================================
     st.markdown('''
     <div style="
-        padding: 16px 24px;
-        margin: 2rem 0 1rem 0;
-        font-size: 1.3rem;
+        padding: 12px 20px;
+        margin: 1rem 0 0.5rem 0;
+        font-size: 1.1rem;
         font-weight: 600;
-        color: #1f2937;
-        background: rgba(255, 255, 255, 0.65);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 20px;
-        backdrop-filter: blur(20px) saturate(160%);
-        -webkit-backdrop-filter: blur(20px) saturate(160%);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    ">🏢 Analyses par SPV (Prestataire)</div>
+        color: #8b5cf6;
+        background: rgba(139, 92, 246, 0.1);
+        border-left: 4px solid #8b5cf6;
+        border-radius: 8px;
+    ">🔌 Statistiques interventions par marques onduleurs</div>
     ''', unsafe_allow_html=True)
     
-    df_spv_metrics = get_spv_metrics_2025(annee_principale)
+    df_stats_onduleurs = get_statistiques_interventions_par_marques_onduleurs()
     
-    if not df_spv_metrics.empty:
-        # Tableau complet des métriques par SPV
-        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-        st.markdown('<h4 style="color: #1f2937; margin-bottom: 16px;">📊 Métriques Complètes par SPV</h4>', unsafe_allow_html=True)
+    if not df_stats_onduleurs.empty:
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        st.markdown('<h4 style="color: #1f2937; margin-bottom: 16px;">📊 Statistiques interventions par marques onduleurs</h4>', unsafe_allow_html=True)
         
-        # Sélection des colonnes à afficher
-        display_cols = {
-            "spv": "SPV",
-            "nb_interventions": "Nb Interv.",
-            "nb_sites_intervenus": "Nb Sites",
-            "nb_curatives": "Curatives",
-            "nb_preventives": "Préventives",
-            "delai_prise_charge_moyen_heures": st.column_config.NumberColumn("Délai Prise Charge (h)", format="%.1f"),
-            "mttr_moyen_jours": st.column_config.NumberColumn("MTTR (j)", format="%.1f"),
-            "taux_resolution_pct": st.column_config.NumberColumn("Taux Résolution (%)", format="%.1f"),
-            "sla_7j_pct": st.column_config.NumberColumn("SLA ≤7j (%)", format="%.1f"),
-            "sla_30j_pct": st.column_config.NumberColumn("SLA ≤30j (%)", format="%.1f"),
-            "cout_total_k": st.column_config.NumberColumn("Coût Total (k€)", format="%.0f"),
-            "cout_moyen_intervention": st.column_config.NumberColumn("Coût Moyen (€)", format="%.0f"),
-            "pr_moyen_sites": st.column_config.NumberColumn("PR Moyen Sites (%)", format="%.1f"),
-            "production_totale_gwh": st.column_config.NumberColumn("Production (GWh)", format="%.2f")
+        # Calculer la hauteur précise pour afficher toutes les lignes
+        nb_lignes = len(df_stats_onduleurs)
+        hauteur_header = 48
+        hauteur_ligne = 33
+        hauteur_tableau = hauteur_header + (nb_lignes * hauteur_ligne)
+        hauteur_tableau = int(hauteur_tableau * 0.98)
+        hauteur_tableau = max(300, hauteur_tableau)
+        
+        # Configuration des colonnes dynamique
+        column_config = {
+            "manufacturername": "Marque d'onduleur"
         }
         
+        # Ajouter toutes les colonnes d'actions comme colonnes numériques
+        for col in df_stats_onduleurs.columns:
+            if col != 'manufacturername':
+                column_config[col] = st.column_config.NumberColumn(col, format="%d")
+        
         st.dataframe(
-            df_spv_metrics,
-            column_config=display_cols,
+            df_stats_onduleurs,
+            column_config=column_config,
             hide_index=True,
             use_container_width=True,
-            height=400
+            height=hauteur_tableau
         )
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Graphiques comparatifs par SPV
-        col_spv1, col_spv2 = st.columns(2)
-        
-        with col_spv1:
-            st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-            fig = px.bar(
-                df_spv_metrics.head(15),
-                x='spv',
-                y='nb_interventions',
-                title='📊 Volume Interventions par SPV (Top 15)',
-                labels={'spv': 'SPV', 'nb_interventions': 'Nb Interventions'},
-                color='nb_interventions',
-                color_continuous_scale='Blues',
-                text='nb_interventions'
-            )
-            fig.update_traces(texttemplate='%{text}', textposition='outside')
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False, xaxis=dict(tickangle=-45))
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col_spv2:
-            st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-            fig = px.bar(
-                df_spv_metrics.head(15),
-                x='spv',
-                y='taux_resolution_pct',
-                title='✅ Taux de Résolution par SPV (Top 15)',
-                labels={'spv': 'SPV', 'taux_resolution_pct': 'Taux Résolution (%)'},
-                color='taux_resolution_pct',
-                color_continuous_scale='Greens',
-                text='taux_resolution_pct'
-            )
-            fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-            fig.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="Target 95%")
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False, xaxis=dict(tickangle=-45), yaxis=dict(range=[0, 100]))
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Graphiques SLA et Coûts par SPV
-        col_spv3, col_spv4 = st.columns(2)
-        
-        with col_spv3:
-            st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                name='SLA ≤7j',
-                x=df_spv_metrics.head(15)['spv'],
-                y=df_spv_metrics.head(15)['sla_7j_pct'],
-                marker_color='#10b981'
-            ))
-            fig.add_trace(go.Bar(
-                name='SLA ≤30j',
-                x=df_spv_metrics.head(15)['spv'],
-                y=df_spv_metrics.head(15)['sla_30j_pct'],
-                marker_color='#3b82f6'
-            ))
-            fig.update_layout(
-                title='⏱️ SLA Clôture par SPV (Top 15)',
-                xaxis_title='SPV',
-                yaxis_title='Taux (%)',
-                barmode='group',
-                height=400,
-                xaxis=dict(tickangle=-45),
-                yaxis=dict(range=[0, 100])
-            )
-            fig.add_hline(y=80, line_dash="dash", line_color="orange", annotation_text="Target 80% (≤7j)")
-            fig.add_hline(y=95, line_dash="dash", line_color="green", annotation_text="Target 95% (≤30j)")
-            fig = apply_glassmorphism_theme(fig)
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col_spv4:
-            st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-            fig = px.bar(
-                df_spv_metrics.head(15),
-                x='spv',
-                y='cout_total_k',
-                title='💰 Coût Total par SPV (Top 15)',
-                labels={'spv': 'SPV', 'cout_total_k': 'Coût Total (k€)'},
-                color='cout_total_k',
-                color_continuous_scale='Reds',
-                text='cout_total_k'
-            )
-            fig.update_traces(texttemplate='%{text:,.0f}k€', textposition='outside')
-            fig = apply_glassmorphism_theme(fig)
-            fig.update_layout(height=400, showlegend=False, xaxis=dict(tickangle=-45))
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
     else:
-        st.info("Aucune donnée SPV disponible")
-
-
+        st.info("Aucune donnée disponible pour les statistiques interventions par marques onduleurs")
+    
+    # ============================================
+    # TABLEAU: Statistiques interventions par modèles onduleurs
+    # ============================================
+    st.markdown('''
+    <div style="
+        padding: 12px 20px;
+        margin: 1rem 0 0.5rem 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #8b5cf6;
+        background: rgba(139, 92, 246, 0.1);
+        border-left: 4px solid #8b5cf6;
+        border-radius: 8px;
+    ">🔌 Statistiques interventions par modèles onduleurs</div>
+    ''', unsafe_allow_html=True)
+    
+    df_stats_modeles = get_statistiques_interventions_par_modeles_onduleurs()
+    
+    if not df_stats_modeles.empty:
+        st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        st.markdown('<h4 style="color: #1f2937; margin-bottom: 16px;">📊 Statistiques interventions par modèles onduleurs</h4>', unsafe_allow_html=True)
+        
+        # Calculer la hauteur précise pour afficher toutes les lignes
+        nb_lignes = len(df_stats_modeles)
+        hauteur_header = 48
+        hauteur_ligne = 33
+        hauteur_tableau = hauteur_header + (nb_lignes * hauteur_ligne)
+        hauteur_tableau = int(hauteur_tableau * 0.98)
+        hauteur_tableau = max(300, hauteur_tableau)
+        
+        # Configuration des colonnes dynamique
+        column_config = {
+            "modelname": "Modèle d'onduleur"
+        }
+        
+        # Ajouter toutes les colonnes d'actions comme colonnes numériques
+        for col in df_stats_modeles.columns:
+            if col != 'modelname':
+                column_config[col] = st.column_config.NumberColumn(col, format="%d")
+        
+        st.dataframe(
+            df_stats_modeles,
+            column_config=column_config,
+            hide_index=True,
+            use_container_width=True,
+            height=hauteur_tableau
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Aucune donnée disponible pour les statistiques interventions par modèles onduleurs")
+    
 # ============================================
 # FONCTIONS VUE SITES
 # ============================================
@@ -7746,13 +8786,13 @@ def get_onduleurs_par_site():
     """Nombre d'onduleurs par site"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         COUNT(*) as nb_onduleurs,
         SUM(nominal_power) / 1000 as puissance_totale_mw,
         AVG(nominal_power) / 1000 as puissance_moyenne_mw
-    FROM onduleurs_view
-    WHERE code IS NOT NULL
-    GROUP BY code
+    FROM onduleur_view
+    WHERE id_site IS NOT NULL
+    GROUP BY id_site
     ORDER BY nb_onduleurs DESC
     """
     df = load_data_from_db(query)
@@ -7763,14 +8803,14 @@ def get_ecart_puissance_onduleurs_site():
     """Écart puissance onduleurs vs puissance site"""
     query = """
     SELECT 
-        o.code as id_site,
+        o.id_site,
         e.nom_site,
         SUM(o.nominal_power) / 1000 as puissance_onduleurs_mw,
         e.puissance_nominale__kWc_ / 1000 as puissance_site_mw,
         (SUM(o.nominal_power) / 1000 - e.puissance_nominale__kWc_ / 1000) / (e.puissance_nominale__kWc_ / 1000) * 100 as ecart_pct
-    FROM onduleurs_view o
-    JOIN exposition e ON o.code = e.id_site
-    GROUP BY o.code, e.nom_site, e.puissance_nominale__kWc_
+    FROM onduleur_view o
+    JOIN exposition e ON o.id_site = e.id_site
+    GROUP BY o.id_site, e.nom_site, e.puissance_nominale__kWc_
     ORDER BY ABS(ecart_pct) DESC
     """
     df = load_data_from_db(query)
@@ -7781,12 +8821,12 @@ def get_fabricants_par_site():
     """Nombre de fabricants par site"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         COUNT(DISTINCT manufacturername) as nb_fabricants,
         GROUP_CONCAT(DISTINCT manufacturername) as fabricants_liste
-    FROM onduleurs_view
-    WHERE code IS NOT NULL AND manufacturername IS NOT NULL
-    GROUP BY code
+    FROM onduleur_view
+    WHERE id_site IS NOT NULL AND manufacturername IS NOT NULL
+    GROUP BY id_site
     ORDER BY nb_fabricants DESC
     """
     df = load_data_from_db(query)
@@ -7800,8 +8840,8 @@ def get_repartition_fabricants_site(site):
         manufacturername,
         COUNT(*) as nb_onduleurs,
         SUM(nominal_power) / 1000 as puissance_mw
-    FROM onduleurs_view
-    WHERE code = ? AND manufacturername IS NOT NULL
+    FROM onduleur_view
+    WHERE id_site = ? AND manufacturername IS NOT NULL
     GROUP BY manufacturername
     ORDER BY nb_onduleurs DESC
     """
@@ -7815,11 +8855,11 @@ def get_modeles_par_site():
     """Nombre de modèles par site"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         COUNT(DISTINCT modelname) as nb_modeles
-    FROM onduleurs_view
-    WHERE code IS NOT NULL AND modelname IS NOT NULL
-    GROUP BY code
+    FROM onduleur_view
+    WHERE id_site IS NOT NULL AND modelname IS NOT NULL
+    GROUP BY id_site
     ORDER BY nb_modeles DESC
     """
     df = load_data_from_db(query)
@@ -7830,17 +8870,17 @@ def get_modele_principal_site():
     """Modèle principal par site"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         modelname as modele_principal,
         COUNT(*) as nb_onduleurs,
-        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleurs_view o2 WHERE o2.code = o1.code) as pourcentage
-    FROM onduleurs_view o1
-    WHERE code IS NOT NULL AND modelname IS NOT NULL
-    GROUP BY code, modelname
+        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleur_view o2 WHERE o2.id_site = o1.id_site) as pourcentage
+    FROM onduleur_view o1
+    WHERE id_site IS NOT NULL AND modelname IS NOT NULL
+    GROUP BY id_site, modelname
     HAVING nb_onduleurs = (
         SELECT MAX(cnt) FROM (
-            SELECT COUNT(*) as cnt FROM onduleurs_view o2 
-            WHERE o2.code = o1.code GROUP BY modelname
+            SELECT COUNT(*) as cnt FROM onduleur_view o2 
+            WHERE o2.id_site = o1.id_site GROUP BY modelname
         )
     )
     """
@@ -7852,12 +8892,12 @@ def get_sites_multi_fabricants():
     """Sites avec plusieurs fabricants"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         COUNT(DISTINCT manufacturername) as nb_fabricants,
         GROUP_CONCAT(DISTINCT manufacturername) as fabricants
-    FROM onduleurs_view
-    WHERE code IS NOT NULL AND manufacturername IS NOT NULL
-    GROUP BY code
+    FROM onduleur_view
+    WHERE id_site IS NOT NULL AND manufacturername IS NOT NULL
+    GROUP BY id_site
     HAVING nb_fabricants > 1
     ORDER BY nb_fabricants DESC
     """
@@ -7872,11 +8912,11 @@ def get_coefficient_variation_puissance():
     """Coefficient de variation puissance par site (calculé avec Python)"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         nominal_power
-    FROM onduleurs_view
-    WHERE code IS NOT NULL
-    ORDER BY code, nominal_power
+    FROM onduleur_view
+    WHERE id_site IS NOT NULL
+    ORDER BY id_site, nominal_power
     """
     df = load_data_from_db(query)
     if df.empty:
@@ -7951,12 +8991,12 @@ def get_liste_onduleurs_site(site):
     """Liste complète des onduleurs d'un site"""
     query = """
     SELECT 
-        code,
+        id_site,
         modelname,
         manufacturername,
         nominal_power / 1000 as puissance_kw
-    FROM onduleurs_view
-    WHERE code = ?
+    FROM onduleur_view
+    WHERE id_site = ?
     ORDER BY manufacturername, modelname, nominal_power DESC
     """
     conn = sqlite3.connect(DB_PATH)
@@ -7973,8 +9013,8 @@ def get_statistiques_globales_onduleurs():
         SUM(nominal_power) / 1000 as puissance_totale_mw,
         COUNT(DISTINCT manufacturername) as nb_fabricants,
         COUNT(DISTINCT modelname) as nb_modeles,
-        COUNT(DISTINCT code) as nb_sites_equipes
-    FROM onduleurs_view
+        COUNT(DISTINCT id_site) as nb_sites_equipes
+    FROM onduleur_view
     """
     df = load_data_from_db(query)
     return df if df is not None and not df.empty else pd.DataFrame()
@@ -7986,9 +9026,9 @@ def get_top_fabricants_globaux(limit=10):
     SELECT 
         manufacturername,
         COUNT(*) as nb_onduleurs,
-        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleurs_view) as pourcentage,
+        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleur_view) as pourcentage,
         SUM(nominal_power) / 1000 as puissance_totale_mw
-    FROM onduleurs_view
+    FROM onduleur_view
     WHERE manufacturername IS NOT NULL
     GROUP BY manufacturername
     ORDER BY nb_onduleurs DESC
@@ -8004,9 +9044,9 @@ def get_top_modeles_globaux(limit=10):
     SELECT 
         modelname,
         COUNT(*) as nb_onduleurs,
-        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleurs_view) as pourcentage,
+        COUNT(*) * 100.0 / (SELECT COUNT(*) FROM onduleur_view) as pourcentage,
         AVG(nominal_power) / 1000 as puissance_moyenne_mw
-    FROM onduleurs_view
+    FROM onduleur_view
     WHERE modelname IS NOT NULL
     GROUP BY modelname
     ORDER BY nb_onduleurs DESC
@@ -8020,15 +9060,15 @@ def get_sites_avec_onduleurs_anormaux():
     """Sites avec onduleurs anormaux (écart >10%, >5 fabricants, >10 modèles)"""
     query = """
     SELECT 
-        code as id_site,
+        id_site,
         COUNT(*) as nb_onduleurs,
         COUNT(DISTINCT manufacturername) as nb_fabricants,
         COUNT(DISTINCT modelname) as nb_modeles,
-        (SUM(nominal_power) / 1000 - (SELECT e.puissance_nominale__kWc_ / 1000 FROM exposition e WHERE e.id_site = o.code)) / 
-        (SELECT e.puissance_nominale__kWc_ / 1000 FROM exposition e WHERE e.id_site = o.code) * 100 as ecart_puissance_pct
-    FROM onduleurs_view o
-    JOIN exposition e ON o.code = e.id_site
-    GROUP BY code
+        (SUM(nominal_power) / 1000 - (SELECT e.puissance_nominale__kWc_ / 1000 FROM exposition e WHERE e.id_site = o.id_site)) / 
+        (SELECT e.puissance_nominale__kWc_ / 1000 FROM exposition e WHERE e.id_site = o.id_site) * 100 as ecart_puissance_pct
+    FROM onduleur_view o
+    JOIN exposition e ON o.id_site = e.id_site
+    GROUP BY id_site
     HAVING ABS(ecart_puissance_pct) > 10 
        OR nb_fabricants > 5 
        OR nb_modeles > 10
@@ -8549,7 +9589,7 @@ def show_sites_view():
                     st.dataframe(
                         df_detail_ond,
                         column_config={
-                            "code": "Code",
+                            "id_site": "Code",
                             "modelname": "Modèle",
                             "manufacturername": "Fabricant",
                             "puissance_kw": st.column_config.NumberColumn("Puissance (kW)", format="%.2f")
@@ -10747,9 +11787,9 @@ def main():
     # Fonction pour obtenir les sites par région avec informations complètes
     def get_sites_by_region(region_name, lat_range, lon_range):
         """Récupère les sites dans une région géographique avec détails onduleurs"""
-        # Vérifier si la table onduleurs_view existe
+        # Vérifier si la table onduleur_view existe
         try:
-            check_query = "SELECT name FROM sqlite_master WHERE type='table' AND name='onduleurs_view'"
+            check_query = "SELECT name FROM sqlite_master WHERE type='table' AND name='onduleur_view'"
             check_df = load_data_from_db(check_query)
             has_onduleurs = check_df is not None and not check_df.empty
         except:
@@ -10767,7 +11807,7 @@ def main():
                 (SELECT GROUP_CONCAT(modelname || ' (' || cnt || ')', ', ')
                  FROM (
                      SELECT modelname, COUNT(*) as cnt
-                     FROM onduleurs_view o
+                     FROM onduleur_view o
                      WHERE o.id_site = e.id_site AND o.modelname IS NOT NULL
                      GROUP BY modelname
                  )) as modeles_et_nb
