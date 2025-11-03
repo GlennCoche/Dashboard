@@ -353,6 +353,15 @@ def load_data_from_db(query):
         df = pd.read_sql_query(query, conn)
         conn.close()
         return df
+    except sqlite3.OperationalError as e:
+        error_msg = str(e)
+        # Si l'erreur concerne une table manquante (onduleur_view), retourner silencieusement None
+        # pour éviter d'afficher des erreurs sur Streamlit Cloud
+        if 'no such table' in error_msg.lower() and 'onduleur_view' in error_msg.lower():
+            return None
+        # Pour les autres erreurs, afficher l'erreur
+        st.error(f"❌ Erreur lors du chargement des données: {e}")
+        return None
     except Exception as e:
         st.error(f"❌ Erreur lors du chargement des données: {e}")
         return None
@@ -527,18 +536,48 @@ def get_kpi_taux_resolution(annee=None):
     return df['taux_resolution'].iloc[0] if df is not None and not df.empty and df['taux_resolution'].iloc[0] is not None else 0
 
 
+def table_exists(table_name):
+    """Vérifie si une table existe dans la base de données"""
+    try:
+        query = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(query, (table_name,))
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    except:
+        return False
+
+
 def get_kpi_onduleurs_total():
     """Nombre total d'onduleurs"""
-    query = "SELECT COUNT(*) as total FROM onduleur_view"
-    df = load_data_from_db(query)
-    return int(df['total'].iloc[0]) if df is not None and not df.empty else 0
+    # Vérifier si la table existe
+    if not table_exists('onduleur_view'):
+        return 0
+    
+    try:
+        query = "SELECT COUNT(*) as total FROM onduleur_view"
+        df = load_data_from_db(query)
+        return int(df['total'].iloc[0]) if df is not None and not df.empty else 0
+    except Exception as e:
+        # Gérer silencieusement l'erreur si la table n'existe pas
+        return 0
 
 
 def get_kpi_puissance_onduleurs():
     """Puissance totale des onduleurs (en MW)"""
-    query = "SELECT SUM(nominal_power) / 1000 as puissance_mw FROM onduleur_view"
-    df = load_data_from_db(query)
-    return df['puissance_mw'].iloc[0] if df is not None and not df.empty and df['puissance_mw'].iloc[0] is not None else 0
+    # Vérifier si la table existe
+    if not table_exists('onduleur_view'):
+        return 0.0
+    
+    try:
+        query = "SELECT SUM(nominal_power) / 1000 as puissance_mw FROM onduleur_view"
+        df = load_data_from_db(query)
+        return df['puissance_mw'].iloc[0] if df is not None and not df.empty and df['puissance_mw'].iloc[0] is not None else 0.0
+    except Exception as e:
+        # Gérer silencieusement l'erreur si la table n'existe pas
+        return 0.0
 
 
 # ============================================
@@ -9066,6 +9105,9 @@ def get_interventions_site(site, annee):
 
 def get_onduleurs_par_site():
     """Nombre d'onduleurs par site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9083,6 +9125,9 @@ def get_onduleurs_par_site():
 
 def get_ecart_puissance_onduleurs_site():
     """Écart puissance onduleurs vs puissance site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         o.id_site,
@@ -9101,6 +9146,9 @@ def get_ecart_puissance_onduleurs_site():
 
 def get_fabricants_par_site():
     """Nombre de fabricants par site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9117,6 +9165,9 @@ def get_fabricants_par_site():
 
 def get_repartition_fabricants_site(site):
     """Répartition onduleurs par fabricant pour un site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         manufacturername,
@@ -9127,14 +9178,20 @@ def get_repartition_fabricants_site(site):
     GROUP BY manufacturername
     ORDER BY nb_onduleurs DESC
     """
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(query, conn, params=(site,))
-    conn.close()
-    return df if df is not None and not df.empty else pd.DataFrame()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(query, conn, params=(site,))
+        conn.close()
+        return df if df is not None and not df.empty else pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
 
 def get_modeles_par_site():
     """Nombre de modèles par site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9150,6 +9207,9 @@ def get_modeles_par_site():
 
 def get_modele_principal_site():
     """Modèle principal par site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9172,6 +9232,9 @@ def get_modele_principal_site():
 
 def get_sites_multi_fabricants():
     """Sites avec plusieurs fabricants"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9192,6 +9255,9 @@ def get_sites_multi_fabricants():
 
 def get_coefficient_variation_puissance():
     """Coefficient de variation puissance par site (calculé avec Python)"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9201,7 +9267,7 @@ def get_coefficient_variation_puissance():
     ORDER BY id_site, nominal_power
     """
     df = load_data_from_db(query)
-    if df.empty:
+    if df is None or df.empty:
         return pd.DataFrame()
     
     # Calculer coefficient de variation par site
@@ -9271,6 +9337,9 @@ def get_analyse_disponibilite_onduleurs():
 
 def get_liste_onduleurs_site(site):
     """Liste complète des onduleurs d'un site"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
@@ -9281,14 +9350,20 @@ def get_liste_onduleurs_site(site):
     WHERE id_site = ?
     ORDER BY manufacturername, modelname, nominal_power DESC
     """
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(query, conn, params=(site,))
-    conn.close()
-    return df if df is not None and not df.empty else pd.DataFrame()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(query, conn, params=(site,))
+        conn.close()
+        return df if df is not None and not df.empty else pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
 
 def get_statistiques_globales_onduleurs():
     """Statistiques globales onduleurs"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         COUNT(*) as total_onduleurs,
@@ -9304,6 +9379,9 @@ def get_statistiques_globales_onduleurs():
 
 def get_top_fabricants_globaux(limit=10):
     """Top fabricants globaux"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = f"""
     SELECT 
         manufacturername,
@@ -9322,6 +9400,9 @@ def get_top_fabricants_globaux(limit=10):
 
 def get_top_modeles_globaux(limit=10):
     """Top modèles globaux"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = f"""
     SELECT 
         modelname,
@@ -9340,6 +9421,9 @@ def get_top_modeles_globaux(limit=10):
 
 def get_sites_avec_onduleurs_anormaux():
     """Sites avec onduleurs anormaux (écart >10%, >5 fabricants, >10 modèles)"""
+    if not table_exists('onduleur_view'):
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         id_site,
