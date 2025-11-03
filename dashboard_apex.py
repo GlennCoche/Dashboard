@@ -2109,38 +2109,6 @@ def show_performance_view():
     </div>
     ''', unsafe_allow_html=True)
     
-    # Filtres
-    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 2rem;">', unsafe_allow_html=True)
-    col_filtre1, col_filtre2, col_filtre3 = st.columns(3)
-    with col_filtre1:
-        annees_disponibles = [2025, 2024, 2023]
-        annees_selectionnees = st.multiselect(
-            "Année(s)", 
-            annees_disponibles, 
-            default=[2025],
-            help="Sélectionnez une ou plusieurs années"
-        )
-        # Si rien n'est sélectionné, utiliser toutes les années
-        if not annees_selectionnees:
-            annees_selectionnees = annees_disponibles
-    with col_filtre2:
-        df_sites = get_liste_sites()
-        sites_list = list(df_sites['id_site'].unique()) if not df_sites.empty else []
-        sites_selectionnes = st.multiselect(
-            "Site(s)", 
-            sites_list,
-            help="Sélectionnez un ou plusieurs sites (laisser vide pour tous)"
-        )
-    with col_filtre3:
-        df_spv = get_liste_spv()
-        spv_list = list(df_spv['spv'].unique()) if not df_spv.empty else []
-        spv_selectionnes = st.multiselect(
-            "SPV", 
-            spv_list,
-            help="Sélectionnez un ou plusieurs SPV (laisser vide pour tous)"
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
-    
     # ============================================
     # SECTION A: Production & Budget
     # ============================================
@@ -2162,6 +2130,14 @@ def show_performance_view():
     
     # P.1 Production Mensuelle vs Budget
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Filtres individuels pour ce graphique
+    annees_selectionnees, categories_selectionnees, zones_selectionnees = create_filters_section("prod_mens_")
+    
+    # Pour Performance, on utilise les catégories et zones comme filtres (sites_selectionnes et spv_selectionnes restent vides pour l'instant)
+    sites_selectionnes = []
+    spv_selectionnes = []
+    
     df_prod_mens = get_production_mensuelle(annees_selectionnees, sites_selectionnes, spv_selectionnes)
     if not df_prod_mens.empty:
         # Créer un graphique combiné avec barres et lignes cumulées
@@ -2204,8 +2180,11 @@ def show_performance_view():
             yaxis='y2'
         ))
         
+        # Afficher le titre avec icône d'aide
+        show_title_with_help("📊 Production Mensuelle vs Budget", "faq-perf-production-mensuelle")
+        
         fig.update_layout(
-            title='📊 Production Mensuelle vs Budget',
+            title='Production Mensuelle vs Budget',
             xaxis_title='Mois',
             yaxis_title='Production Mensuelle (GWh)',
             yaxis2=dict(title='Production Cumulée (GWh)', overlaying='y', side='right'),
@@ -2221,10 +2200,17 @@ def show_performance_view():
     # P.3 : Écarts Production, Irradiation et Disponibilité vs Budget
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
     
+    # Filtres individuels pour ce graphique
+    annees_selectionnees_ecart, categories_selectionnees_ecart, zones_selectionnees_ecart = create_filters_section("ecart_")
+    
+    # Pour Performance, on utilise les catégories et zones comme filtres
+    sites_selectionnes_ecart = []
+    spv_selectionnes_ecart = []
+    
     # Récupérer toutes les données nécessaires
-    df_prod_mens = get_production_mensuelle(annees_selectionnees, sites_selectionnes, spv_selectionnes)
-    df_irra_mens = get_irradiation_mensuelle(annees_selectionnees, sites_selectionnes, spv_selectionnes)
-    df_dispo_mens = get_disponibilite_mensuelle_ecart(annees_selectionnees, sites_selectionnes, spv_selectionnes)
+    df_prod_mens = get_production_mensuelle(annees_selectionnees_ecart, sites_selectionnes_ecart, spv_selectionnes_ecart)
+    df_irra_mens = get_irradiation_mensuelle(annees_selectionnees_ecart, sites_selectionnes_ecart, spv_selectionnes_ecart)
+    df_dispo_mens = get_disponibilite_mensuelle_ecart(annees_selectionnees_ecart, sites_selectionnes_ecart, spv_selectionnes_ecart)
     
     if not df_prod_mens.empty:
         # Calculer les écarts
@@ -2328,8 +2314,12 @@ def show_performance_view():
             ))
         
         fig.add_hline(y=0, line_dash="dash", line_color="gray", line_width=1)
+        
+        # Afficher le titre avec icône d'aide
+        show_title_with_help("📉 Écarts Production, Irradiation et Disponibilité vs Budget", "faq-perf-ecarts")
+        
         fig.update_layout(
-            title='📉 Écarts Production, Irradiation et Disponibilité vs Budget',
+            title='Écarts Production, Irradiation et Disponibilité vs Budget',
             xaxis_title='Mois',
             yaxis_title='Écart (%)',
             height=500,
@@ -2350,6 +2340,9 @@ def show_performance_view():
     
     # P.4 : Détail des Pertes (Waterfall)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("💧 Détail des Pertes (Waterfall)", "faq-perf-waterfall")
     
     # Simulation des données basées sur l'image (en attendant les vraies données de la base)
     # Valeurs en MWh selon l'image
@@ -2424,6 +2417,13 @@ def show_performance_view():
     
     # P.5 : Carte Gisement Solaire par Zone
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-top: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("🌍 Carte Gisement Solaire par Zone", "faq-perf-carte-gisement")
+    
+    # Filtres individuels pour ce graphique
+    annees_selectionnees_map, categories_selectionnees_map, zones_selectionnees_map = create_filters_section("map_gisement_")
+    spv_selectionnes_map = []  # Pour Performance, zones_selectionnees_map peut être utilisé pour filtrer si nécessaire
     
     # Définition des territoires d'outre-mer avec leurs coordonnées (nécessaire pour le panneau)
     territoires_om = {
@@ -2538,12 +2538,12 @@ def show_performance_view():
     
     # Ajouter les filtres si nécessaire
     where_conditions = []
-    if annees_selectionnees:
-        annees_str = ','.join(map(str, annees_selectionnees))
+    if annees_selectionnees_map:
+        annees_str = ','.join(map(str, annees_selectionnees_map))
         where_conditions.append(f"CAST(strftime('%Y', cms.date) AS INTEGER) IN ({annees_str})")
     
-    if spv_selectionnes:
-        spvs_str = "','".join(spv_selectionnes).replace("'", "''")
+    if spv_selectionnes_map:
+        spvs_str = "','".join(spv_selectionnes_map).replace("'", "''")
         where_conditions.append(f"e.spv IN ('{spvs_str}')")
     
     if where_conditions:
@@ -2716,7 +2716,7 @@ def show_performance_view():
                     toutes_moyennes_budget_om = []
                     
                     for territoire_name, config in territoires_om.items():
-                        df_territoire = get_sites_territoire(territoire_name, config, annees_selectionnees, spv_selectionnes)
+                        df_territoire = get_sites_territoire(territoire_name, config, annees_selectionnees_map, spv_selectionnes_map)
                         if not df_territoire.empty:
                             moyenne_irra = df_territoire['irra_reel_moyenne'].mean()
                             moyenne_budget = df_territoire['irra_budget_moyenne'].mean()
@@ -3215,8 +3215,16 @@ def show_performance_view():
     
     # Premier graphique : Irradiation Réelle vs Théorique (pleine largeur)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 20px;">', unsafe_allow_html=True)
-    df_irra = get_irradiation_reelle_vs_theorique(annees_selectionnees, spv_selectionnes)
-    df_irra_2024 = get_irradiation_reelle_2024(spv_selectionnes)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("☀️ Irradiation Réelle vs Théorique", "faq-perf-irradiation")
+    
+    # Filtres individuels pour ce graphique
+    annees_selectionnees_irra, categories_selectionnees_irra, zones_selectionnees_irra = create_filters_section("irra_")
+    spv_selectionnes_irra = []
+    
+    df_irra = get_irradiation_reelle_vs_theorique(annees_selectionnees_irra, spv_selectionnes_irra)
+    df_irra_2024 = get_irradiation_reelle_2024(spv_selectionnes_irra)
     
     if not df_irra.empty:
         fig = go.Figure()
@@ -3237,7 +3245,7 @@ def show_performance_view():
             yaxis='y2'
         ))
         fig.update_layout(
-            title='☀️ Irradiation Réelle vs Théorique',
+            title='',
             xaxis_title='Mois',
             yaxis_title='Irradiation (kWh/m²)',
             yaxis2=dict(title='Déviation', overlaying='y', side='right'),
@@ -3252,7 +3260,15 @@ def show_performance_view():
     
     # Deuxième graphique : Corrélation Irradiation/Production (pleine largeur)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-    df_corr = get_correlation_irradiation_production(annees_selectionnees, spv_selectionnes)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📊 Corrélation Irradiation/Production", "faq-perf-correlation")
+    
+    # Filtres individuels pour ce graphique
+    annees_selectionnees_corr, categories_selectionnees_corr, zones_selectionnees_corr = create_filters_section("corr_")
+    spv_selectionnes_corr = []
+    
+    df_corr = get_correlation_irradiation_production(annees_selectionnees_corr, spv_selectionnes_corr)
     if not df_corr.empty and len(df_corr) > 1:
         # Calculer corrélation
         correlation = df_corr['irra_reel'].corr(df_corr['prod_reel'])
@@ -3264,7 +3280,7 @@ def show_performance_view():
             df_corr,
             x='irra_reel',
             y='prod_reel',
-            title='📊 Corrélation Irradiation/Production',
+            title='',
             labels={'irra_reel': 'Irradiation (kWh/m²)', 'prod_reel': 'Production (kWh)'},
             log_y=True,  # Échelle logarithmique pour l'axe Y (Production)
             opacity=0.6,  # Transparence pour mieux voir les points superposés
@@ -3369,7 +3385,7 @@ def show_performance_view():
             """, unsafe_allow_html=True)
         
         # Tableau des corrélations par zone
-        df_corr_zone = get_correlation_par_zone(annees_selectionnees, spv_selectionnes)
+        df_corr_zone = get_correlation_par_zone(annees_selectionnees_corr, spv_selectionnes_corr)
         if not df_corr_zone.empty:
             # Configuration des colonnes dynamique selon les années présentes
             column_config = {"Zone": "Zone"}
@@ -3404,7 +3420,7 @@ def show_performance_view():
         """, unsafe_allow_html=True)
         
         # Tableau des corrélations par mois
-        df_corr_mois = get_correlation_par_mois(annees_selectionnees, spv_selectionnes)
+        df_corr_mois = get_correlation_par_mois(annees_selectionnees_corr, spv_selectionnes_corr)
         if not df_corr_mois.empty:
             # Configuration des colonnes dynamique selon les années présentes
             column_config = {"Mois": "Mois"}
@@ -3453,8 +3469,11 @@ def show_performance_view():
     ">🔍 Analyses Complémentaires</div>
     ''', unsafe_allow_html=True)
     
+    # Filtres individuels pour ce tableau
+    annees_selectionnees_tab, categories_selectionnees_tab, zones_selectionnees_tab = create_filters_section("tab_mensuel_")
+    
     # Déterminer l'année principale pour la comparaison (première année sélectionnée, ou la plus récente par défaut)
-    annee_principale = max(annees_selectionnees) if annees_selectionnees else 2025
+    annee_principale = max(annees_selectionnees_tab) if annees_selectionnees_tab else 2025
     annee_n1 = annee_principale - 1
     
     # Tableau mensuel des indicateurs (Année N / Année N-1)
@@ -3467,8 +3486,10 @@ def show_performance_view():
         color: #1f2937;
         background: rgba(255, 255, 255, 0.5);
         border-radius: 12px;
-    ">📊 Tableau mensuel des indicateurs ({annee_principale} / {annee_n1})</div>
     """, unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help(f"📊 Tableau mensuel des indicateurs ({annee_principale} / {annee_n1})", "faq-perf-tableau-mensuel", style="font-size: 1.2rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.5); border-radius: 12px; padding: 8px 12px; margin-bottom: 1rem;")
     
     # Fonction pour formater une cellule combinée avec Année N, Année N-1 et évolution (format HTML)
     # Définie avant les tableaux pour être accessible aux deux
@@ -3909,8 +3930,8 @@ def show_performance_view():
                     order: [[0, 'asc']],  // Tri par défaut : colonne 0 (Mois) en ordre croissant numérique (1-12)
                     ordering: true,  // Activer le tri
                     pageLength: -1,  // Afficher toutes les lignes par défaut (12 mois + TOTAL = 13 lignes)
+                    paging: false,  // Désactiver la pagination pour afficher toutes les lignes
                     lengthMenu: [[12, 15, 25, 50, -1], [12, 15, 25, 50, "Tous"]],
-                    paging: false,  // Désactiver la pagination pour afficher tout le contenu
                     orderFixed: [[0, 'asc']],  // Fixer l'ordre par défaut sur la colonne Mois
                     columnDefs: [
                         {
@@ -4009,7 +4030,10 @@ def show_performance_view():
         
         # Utiliser st.components.v1.html pour permettre l'exécution de JavaScript
         # Hauteur ajustée pour afficher tous les mois (12 mois + TOTAL = 13 lignes) sans scroll
-        components.html(html_table, height=1000, scrolling=False)
+        # Calculer la hauteur nécessaire dynamiquement pour afficher toutes les lignes (12 mois + TOTAL = 13 lignes)
+        nb_lignes_mensuel = len(df_display)
+        hauteur_tableau_mensuel = max(1200, (nb_lignes_mensuel * 60) + 400)  # Minimum 1200px, sinon calcul dynamique (~60px par ligne + 400px pour en-tête)
+        components.html(html_table, height=int(hauteur_tableau_mensuel), scrolling=False)
     else:
         st.info("Aucune donnée disponible pour le tableau mensuel des indicateurs.")
     
@@ -4023,15 +4047,22 @@ def show_performance_view():
         color: #1f2937;
         background: rgba(255, 255, 255, 0.5);
         border-radius: 12px;
-    ">📊 Tableau des indicateurs par SPV ({annee_principale} / {annee_n1})</div>
     """, unsafe_allow_html=True)
     
-    df_tableau_spv = get_tableau_indicateurs_par_spv(annee_principale)
+    # Titre avec icône d'aide
+    show_title_with_help("📊 Tableau des indicateurs par SPV", "faq-perf-tableau-spv", style="font-size: 1.2rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.5); border-radius: 12px; padding: 8px 12px; margin-bottom: 1rem;")
+    
+    # Filtres individuels pour ce tableau
+    annees_selectionnees_tab_spv, categories_selectionnees_tab_spv, zones_selectionnees_tab_spv = create_filters_section("tab_spv_")
+    annee_principale_tab_spv = max(annees_selectionnees_tab_spv) if annees_selectionnees_tab_spv else 2025
+    annee_n1_tab_spv = annee_principale_tab_spv - 1
+    
+    df_tableau_spv = get_tableau_indicateurs_par_spv(annee_principale_tab_spv)
     
     if not df_tableau_spv.empty:
         # Noms de colonnes dynamiques selon l'année (même logique que tableau mensuel)
-        col_annee_n = f'{annee_principale}'
-        col_annee_n1 = f'{annee_n1}'
+        col_annee_n = f'{annee_principale_tab_spv}'
+        col_annee_n1 = f'{annee_n1_tab_spv}'
         
         # Créer un DataFrame avec colonnes combinées pour l'affichage (même logique que tableau mensuel)
         df_display_spv = pd.DataFrame()
@@ -4285,8 +4316,8 @@ def show_performance_view():
                 const tableSPV = jQuery('#tableau-spv-indicateurs').DataTable({
                     order: [[0, 'asc']],  // Tri par défaut : colonne 0 (SPV) en ordre alphabétique croissant
                     pageLength: -1,  // Afficher toutes les lignes par défaut (toutes les SPV)
+                    paging: false,  // Désactiver la pagination pour afficher toutes les lignes
                     lengthMenu: [[10, 15, 25, 50, -1], [10, 15, 25, 50, "Tous"]],
-                    paging: false,  // Désactiver la pagination pour afficher tout le contenu
                     language: {
                         search: "Rechercher:",
                         lengthMenu: "Afficher _MENU_ lignes",
@@ -4342,9 +4373,9 @@ def show_performance_view():
         </html>
         """
         
-        # Calculer la hauteur nécessaire dynamiquement : ~50px par ligne + 200px pour en-tête et padding
+        # Calculer la hauteur nécessaire dynamiquement : ~60px par ligne + 400px pour en-tête et padding
         nb_lignes_spv = len(df_display_spv)
-        hauteur_tableau_spv = max(3000, (nb_lignes_spv * 50) + 300)  # Minimum 3000px, sinon calcul dynamique
+        hauteur_tableau_spv = max(4000, (nb_lignes_spv * 60) + 400)  # Minimum 4000px, sinon calcul dynamique (~60px par ligne + 400px pour en-tête)
         
         # Utiliser st.components.v1.html pour permettre l'exécution de JavaScript
         # Hauteur ajustée dynamiquement pour afficher toutes les SPV sans scroll
@@ -5734,6 +5765,220 @@ def get_zones_maintenance_disponibles():
     return ['BayWa', 'MSP', 'ENER']
 
 
+def create_filters_section(key_prefix=""):
+    """Crée une section de filtres (Année(s), Catégorie(s), Zone Maintenance) pour un graphique/tableau individuel
+    
+    Args:
+        key_prefix: Préfixe unique pour les clés Streamlit (ex: "chart1_", "table1_")
+    
+    Returns:
+        tuple: (annees_selectionnees, categories_selectionnees, zones_selectionnees)
+    """
+    col_f1, col_f2, col_f3 = st.columns(3)
+    
+    with col_f1:
+        annees_disponibles = get_annees_disponibles_maintenance()
+        annees_selectionnees = st.multiselect(
+            "Année(s)", 
+            annees_disponibles,
+            default=[annees_disponibles[0]] if annees_disponibles else [],
+            help="Sélectionnez une ou plusieurs années",
+            key=f"{key_prefix}annees"
+        )
+        if not annees_selectionnees:
+            annees_selectionnees = annees_disponibles
+    
+    with col_f2:
+        categories_disponibles = get_categories_disponibles_maintenance()
+        categories_selectionnees = st.multiselect(
+            "Catégorie(s)",
+            categories_disponibles,
+            default=[],
+            help="Sélectionnez une ou plusieurs catégories (laisser vide pour toutes)",
+            key=f"{key_prefix}categories"
+        )
+        if not categories_selectionnees:
+            categories_selectionnees = categories_disponibles
+    
+    with col_f3:
+        zones_disponibles = get_zones_maintenance_disponibles()
+        zones_selectionnees = st.multiselect(
+            "Zone Maintenance",
+            zones_disponibles,
+            default=[],
+            help="Sélectionnez une ou plusieurs zones de maintenance (laisser vide pour toutes)",
+            key=f"{key_prefix}zones"
+        )
+    
+    return annees_selectionnees, categories_selectionnees, zones_selectionnees
+
+
+def create_help_icon_html(faq_section_id):
+    """Crée une icône d'aide "?" dans un cercle avec lien vers la section FAQ (HTML)
+    
+    Args:
+        faq_section_id: ID de la section FAQ à ouvrir (ex: "faq-kpi-production")
+    
+    Returns:
+        str: HTML de l'icône cliquable
+    """
+    return f'''
+    <button onclick="
+        window.parent.postMessage({{type: 'faq_navigate', section: '{faq_section_id}'}}, '*');
+        return false;
+    " 
+    style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(10, 132, 255, 0.1); border: 1px solid rgba(10, 132, 255, 0.3); cursor: pointer; margin-left: 8px; vertical-align: middle; transition: all 0.2s ease; padding: 0;"
+    onmouseover="this.style.background='rgba(10, 132, 255, 0.2)'; this.style.borderColor='rgba(10, 132, 255, 0.5)';"
+    onmouseout="this.style.background='rgba(10, 132, 255, 0.1)'; this.style.borderColor='rgba(10, 132, 255, 0.3)';"
+    title="Cliquez pour voir l'aide">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #0A84FF;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+    </button>
+    '''
+
+
+def show_kpi_with_help(label_text, faq_section_id):
+    """Affiche un label de KPI avec une icône d'aide cliquable à côté.
+    
+    Args:
+        label_text: Texte du label du KPI
+        faq_section_id: ID de la section FAQ à ouvrir
+    """
+    # Créer une colonne pour le label et l'icône
+    col_label, col_icon = st.columns([20, 1])
+    
+    with col_label:
+        st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;"><span style="font-weight: 600;">{label_text}</span></div>', unsafe_allow_html=True)
+    
+    with col_icon:
+        # Bouton Streamlit avec le caractère "?" stylisé
+        if st.button("?", key=f"help_kpi_{faq_section_id}", help="Cliquez pour voir l'aide", use_container_width=False):
+            st.session_state.vue_active = 'faq'
+            st.session_state.faq_section_to_scroll = faq_section_id
+            st.rerun()
+        
+        # CSS pour styliser le bouton "?" comme une icône circulaire (après le bouton pour cibler correctement)
+        st.markdown(f'''
+        <style>
+        button[data-testid*="help_kpi_{faq_section_id}"] {{
+            width: 24px !important;
+            height: 24px !important;
+            min-width: 24px !important;
+            max-width: 24px !important;
+            padding: 0 !important;
+            border-radius: 50% !important;
+            background: rgba(10, 132, 255, 0.1) !important;
+            border: 1px solid rgba(10, 132, 255, 0.3) !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important;
+            font-size: 14px !important;
+            line-height: 1 !important;
+            color: #0A84FF !important;
+            font-weight: 600 !important;
+        }}
+        button[data-testid*="help_kpi_{faq_section_id}"]:hover {{
+            background: rgba(10, 132, 255, 0.2) !important;
+            border-color: rgba(10, 132, 255, 0.5) !important;
+        }}
+        button[data-testid*="help_kpi_{faq_section_id}"] > div {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+            height: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }}
+        button[data-testid*="help_kpi_{faq_section_id}"] > div > p {{
+            margin: 0 !important;
+            padding: 0 !important;
+            font-size: 14px !important;
+            line-height: 1 !important;
+            color: #0A84FF !important;
+            font-weight: 600 !important;
+        }}
+        </style>
+        ''', unsafe_allow_html=True)
+
+
+def create_help_icon(faq_section_id):
+    """Crée l'icône d'aide HTML pour les KPI du Dashboard (ancienne version pour compatibilité).
+    Cette fonction est maintenant dépréciée, utilisez show_kpi_with_help() à la place.
+    """
+    # Pour compatibilité avec le code existant, retourner une chaîne vide
+    # Le bouton sera créé via show_kpi_with_help() ou directement
+    return ""
+
+
+def show_title_with_help(title_text, faq_section_id, style="font-size: 1.2rem; font-weight: 600; color: #1f2937; margin-bottom: 1rem;"):
+    """Affiche un titre avec une icône d'aide cliquable qui redirige vers la FAQ
+    
+    Args:
+        title_text: Texte du titre
+        faq_section_id: ID de la section FAQ à ouvrir
+        style: Style CSS optionnel pour le titre
+    """
+    # Créer une colonne pour le titre et une pour le bouton d'aide
+    col_title, col_help = st.columns([20, 1])
+    
+    with col_title:
+        st.markdown(f'<div style="{style}">{title_text}</div>', unsafe_allow_html=True)
+    
+    with col_help:
+        # Afficher l'icône SVG dans un cercle avec st.markdown
+        help_icon_html = f'''
+        <div id="help_icon_{faq_section_id}" style="
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(10, 132, 255, 0.1);
+            border: 1px solid rgba(10, 132, 255, 0.3);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 4px;
+        " onclick="
+            var btn = document.querySelector('button[data-help-nav=\\'{faq_section_id}\\']');
+            if (btn) btn.click();
+        " onmouseover="this.style.background='rgba(10, 132, 255, 0.2)'; this.style.borderColor='rgba(10, 132, 255, 0.5)';" onmouseout="this.style.background='rgba(10, 132, 255, 0.1)'; this.style.borderColor='rgba(10, 132, 255, 0.3)';" title="Cliquez pour voir l'aide">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #0A84FF;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+        </div>
+        '''
+        st.markdown(help_icon_html, unsafe_allow_html=True)
+        
+        # Bouton Streamlit invisible pour déclencher la navigation (déclenché par le onclick JavaScript)
+        if st.button("", key=f"help_nav_{faq_section_id}", help=None, use_container_width=True):
+            st.session_state.vue_active = 'faq'
+            st.session_state.faq_section_to_scroll = faq_section_id
+            st.rerun()
+        
+        # Ajouter l'attribut data-help-nav au bouton pour que le JavaScript puisse le trouver
+        st.markdown(f'''
+        <script>
+        (function() {{
+            var btn = document.querySelector('button[data-testid*="help_nav_{faq_section_id}"]');
+            if (btn) {{
+                btn.setAttribute('data-help-nav', '{faq_section_id}');
+                btn.style.display = 'none';
+            }}
+        }})();
+        </script>
+        ''', unsafe_allow_html=True)
+
+
 @st.cache_data
 def get_taux_recurrence_equipement(annee):
     """Calcule le taux de récurrence par équipement avec métriques complètes (filtre CURATIVE uniquement)"""
@@ -6488,55 +6733,6 @@ def show_maintenance_view():
     </div>
     ''', unsafe_allow_html=True)
     
-    # Filtres avec sélection multiple
-    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 2rem;">', unsafe_allow_html=True)
-    
-    annees_disponibles = get_annees_disponibles_maintenance()
-    categories_disponibles = get_categories_disponibles_maintenance()
-    zones_disponibles = get_zones_maintenance_disponibles()
-    
-    col_filtre1, col_filtre2, col_filtre3 = st.columns(3)
-    
-    with col_filtre1:
-        annees_selectionnees = st.multiselect(
-            "Année(s)", 
-            annees_disponibles,
-            default=[annees_disponibles[0]] if annees_disponibles else [],
-            help="Sélectionnez une ou plusieurs années",
-            key="maintenance_annees"
-        )
-        # Si rien n'est sélectionné, utiliser toutes les années
-        if not annees_selectionnees:
-            annees_selectionnees = annees_disponibles
-    
-    with col_filtre2:
-        categories_selectionnees = st.multiselect(
-            "Catégorie(s)",
-            categories_disponibles,
-            default=[],
-            help="Sélectionnez une ou plusieurs catégories (laisser vide pour toutes)",
-            key="maintenance_categories"
-        )
-        # Si rien n'est sélectionné, utiliser toutes les catégories
-        if not categories_selectionnees:
-            categories_selectionnees = categories_disponibles
-    
-    with col_filtre3:
-        zones_selectionnees = st.multiselect(
-            "Zone Maintenance",
-            zones_disponibles,
-            default=[],
-            help="Sélectionnez une ou plusieurs zones de maintenance (laisser vide pour toutes)",
-            key="maintenance_zones"
-        )
-        # Si rien n'est sélectionné, ne pas filtrer par zone (pas de jointure nécessaire)
-        # zones_selectionnees reste vide pour éviter la jointure inutile
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Calculer l'année principale pour les fonctions qui nécessitent une année unique
-    annee_principale = annees_selectionnees[0] if annees_selectionnees else 2025
-    
     # ============================================
     # SECTION A: Volume & Fréquence
     # ============================================
@@ -6558,6 +6754,13 @@ def show_maintenance_view():
     
     # M.1 Chronologie Maintenance
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📅 M.1 Chronologie Maintenance", "faq-maint-chronologie")
+    
+    # Filtres individuels pour ce graphique
+    annees_selectionnees, categories_selectionnees, zones_selectionnees = create_filters_section("chrono_")
+    
     df_chrono = get_chronologie_maintenance(annees_selectionnees, categories_selectionnees, zones_selectionnees)
     # Pour disponibilité, on prend la première année sélectionnée (ou toutes si plusieurs)
     annee_principale = annees_selectionnees[0] if annees_selectionnees else 2025
@@ -6591,6 +6794,7 @@ def show_maintenance_view():
         # Section comparaison N-1 (année précédente) - graphique unique
         if annee_principale and annee_principale > 2023:
             annee_n1 = annee_principale - 1
+            # Utiliser les mêmes filtres catégories et zones pour N-1
             df_chrono_n1 = get_chronologie_maintenance([annee_n1], categories_selectionnees, zones_selectionnees)
             df_dispo_n1 = get_disponibilite_mensuelle(annee_n1)
             
@@ -6688,14 +6892,22 @@ def show_maintenance_view():
     with col_cat:
         # M.2 : Interventions par Catégorie (Treemap)
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
-        df_repart = get_repartition_interventions(annees_selectionnees, categories_selectionnees, zones_selectionnees)
-        df_repart_zones = get_repartition_interventions_par_zone(annees_selectionnees, categories_selectionnees, zones_selectionnees)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("🗂️ M.2 Interventions par Catégorie (Treemap)", "faq-maint-treemap-categorie")
+        
+        # Filtres individuels pour ce graphique
+        annees_selectionnees_cat, categories_selectionnees_cat, zones_selectionnees_cat = create_filters_section("cat_treemap_")
+        annee_principale_cat = annees_selectionnees_cat[0] if annees_selectionnees_cat else 2025
+        
+        df_repart = get_repartition_interventions(annees_selectionnees_cat, categories_selectionnees_cat, zones_selectionnees_cat)
+        df_repart_zones = get_repartition_interventions_par_zone(annees_selectionnees_cat, categories_selectionnees_cat, zones_selectionnees_cat)
         
         # Récupérer les données N-1 si année > 2023
         df_repart_n1 = pd.DataFrame()
-        if annee_principale and annee_principale > 2023:
-            annee_n1 = annee_principale - 1
-            df_repart_n1 = get_repartition_interventions([annee_n1], categories_selectionnees, zones_selectionnees)
+        if annee_principale_cat and annee_principale_cat > 2023:
+            annee_n1 = annee_principale_cat - 1
+            df_repart_n1 = get_repartition_interventions([annee_n1], categories_selectionnees_cat, zones_selectionnees_cat)
         
         if not df_repart.empty:
             # Trier le DataFrame par nb décroissant pour s'assurer que les plus grandes valeurs sont en premier
@@ -6764,7 +6976,7 @@ def show_maintenance_view():
             ))
             
             fig.update_layout(
-                title='🔧 Interventions par Catégorie',
+                title='',
                 height=500,
                 margin=dict(l=0, r=0, t=40, b=0)
             )
@@ -6778,13 +6990,21 @@ def show_maintenance_view():
     with col_sev:
         # M.5 : Interventions par Sévérité (Treemap)
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        df_severite = get_interventions_par_severite(annee_principale)
-        df_severite_zones = get_interventions_severite_par_zone(annee_principale)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("⚠️ M.5 Interventions par Sévérité (Treemap)", "faq-maint-treemap-severite")
+        
+        # Filtres individuels pour ce graphique
+        annees_selectionnees_sev, categories_selectionnees_sev, zones_selectionnees_sev = create_filters_section("sev_treemap_")
+        annee_principale_sev = annees_selectionnees_sev[0] if annees_selectionnees_sev else 2025
+        
+        df_severite = get_interventions_par_severite(annee_principale_sev)
+        df_severite_zones = get_interventions_severite_par_zone(annee_principale_sev)
         
         # Récupérer les données N-1 si année > 2023
         df_severite_n1_agg = pd.DataFrame()
-        if annee_principale and annee_principale > 2023:
-            annee_n1 = annee_principale - 1
+        if annee_principale_sev and annee_principale_sev > 2023:
+            annee_n1 = annee_principale_sev - 1
             df_severite_n1 = get_interventions_par_severite(annee_n1)
             if not df_severite_n1.empty:
                 df_severite_n1_agg = df_severite_n1.groupby('severite_categorie')['nb_interventions'].sum().reset_index()
@@ -6855,7 +7075,7 @@ def show_maintenance_view():
             ))
             
             fig.update_layout(
-                title='⚠️ Interventions par Sévérité',
+                title='',
                 height=500,
                 margin=dict(l=0, r=0, t=40, b=0)
             )
@@ -6868,17 +7088,25 @@ def show_maintenance_view():
     
     # Section en dessous : Grille de tableaux SPV (2x4)
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">🏢 Interventions par SPV (Top 8) et Sites (Top 5)</h3>', unsafe_allow_html=True)
+    
+    st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("🏢 Interventions par SPV (Top 8) et Sites (Top 5)", "faq-maint-spv-sites")
+    
+    # Filtres individuels pour ce tableau
+    annees_selectionnees_spv, categories_selectionnees_spv, zones_selectionnees_spv = create_filters_section("spv_table_")
+    annee_principale_spv = annees_selectionnees_spv[0] if annees_selectionnees_spv else 2025
     
     # Récupérer l'année N-1
     annee_n1 = None
-    if annee_principale and annee_principale > 2023:
-        annee_n1 = annee_principale - 1
+    if annee_principale_spv and annee_principale_spv > 2023:
+        annee_n1 = annee_principale_spv - 1
     
-    df_spv_sites_all = get_interventions_spv_et_sites_tableau(annee_principale, annee_n1, limit_spv=8, limit_sites_per_spv=5)
+    df_spv_sites_all = get_interventions_spv_et_sites_tableau(annee_principale_spv, annee_n1, limit_spv=8, limit_sites_per_spv=5)
     
     # Récupérer les données CURATIVES par sévérité pour tous les SPV et sites
-    df_curatives_severite = get_interventions_curatives_par_severite(annee_principale, annee_n1)
+    df_curatives_severite = get_interventions_curatives_par_severite(annee_principale_spv, annee_n1)
     
     if not df_spv_sites_all.empty:
         # Extraire la liste des SPV uniques (lignes avec is_spv_total = True)
@@ -6907,7 +7135,7 @@ def show_maintenance_view():
                         html_table = '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">'
                         html_table += '<thead><tr style="background: rgba(15, 23, 42, 0.8); color: white; font-weight: 600;">'
                         html_table += '<th style="padding: 8px; text-align: left; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Site</th>'
-                        html_table += f'<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Interventions<br>{annee_principale} | N-1</th>'
+                        html_table += f'<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Interventions<br>{annee_principale_spv} | N-1</th>'
                         html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px;">Évolution</th>'
                         html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(239, 68, 68, 0.3);">Critical<br>CURATIVE</th>'
                         html_table += '<th style="padding: 8px; text-align: center; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; background: rgba(245, 158, 11, 0.3);">Normal<br>CURATIVE</th>'
@@ -7052,14 +7280,18 @@ def show_maintenance_view():
     
     with col_m9:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">✅ Taux de Résolution (CURATIVE uniquement)</h3>', unsafe_allow_html=True)
+        show_title_with_help("✅ Taux de Résolution (CURATIVE uniquement)", "faq-maint-taux-resolution")
+        
+        # Filtres individuels pour ce tableau
+        annees_selectionnees_taux, categories_selectionnees_taux, zones_selectionnees_taux = create_filters_section("taux_resolution_")
+        annee_principale_taux = annees_selectionnees_taux[0] if annees_selectionnees_taux else 2025
         
         # Récupérer l'année N-1
         annee_n1 = None
-        if annee_principale and annee_principale > 2023:
-            annee_n1 = annee_principale - 1
+        if annee_principale_taux and annee_principale_taux > 2023:
+            annee_n1 = annee_principale_taux - 1
         
-        df_taux_zone_sev = get_taux_resolution_par_zone_severite(annee_principale, annee_n1)
+        df_taux_zone_sev = get_taux_resolution_par_zone_severite(annee_principale_taux, annee_n1)
         
         if not df_taux_zone_sev.empty:
             # Créer une matrice Zone x Sévérité
@@ -7173,14 +7405,18 @@ def show_maintenance_view():
     
     with col_m10:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
-        st.markdown('<h3 style="color: #1f2937; margin-bottom: 1rem;">⏱️ MTTR Moyen (CURATIVE uniquement)</h3>', unsafe_allow_html=True)
+        show_title_with_help("⏱️ MTTR Moyen (CURATIVE uniquement)", "faq-maint-mttr")
+        
+        # Filtres individuels pour ce tableau
+        annees_selectionnees_mttr, categories_selectionnees_mttr, zones_selectionnees_mttr = create_filters_section("mttr_")
+        annee_principale_mttr = annees_selectionnees_mttr[0] if annees_selectionnees_mttr else 2025
         
         # Récupérer l'année N-1
         annee_n1 = None
-        if annee_principale and annee_principale > 2023:
-            annee_n1 = annee_principale - 1
+        if annee_principale_mttr and annee_principale_mttr > 2023:
+            annee_n1 = annee_principale_mttr - 1
         
-        df_mttr_zone_sev = get_mttr_par_zone_severite(annee_principale, annee_n1)
+        df_mttr_zone_sev = get_mttr_par_zone_severite(annee_principale_mttr, annee_n1)
         
         if not df_mttr_zone_sev.empty:
             # Créer une matrice Zone x Sévérité
@@ -7331,17 +7567,68 @@ def show_maintenance_view():
     # M.SLA : SLA Clôture par Zone et Sévérité (CURATIVE uniquement)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
     
-    # Titre avec explication
-    st.markdown('''
-    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-        <h3 style="color: #1f2937; margin: 0; margin-right: 10px;">📊 SLA Clôture par Zone (CURATIVE uniquement)</h3>
-        <span style="font-size: 12px; color: #6b7280; font-style: italic;">
-            Il s'agit d'objectifs de délai de clôture des interventions de maintenance. "Critical" = SLA ≤3j ouvrés ; "Normal" = SLA ≤7j ouvrés ; "Low" = SLA ≤10j ouvrés ; "Warning" = SLA ≤20j ouvrés
-        </span>
-    </div>
-    ''', unsafe_allow_html=True)
+    # Titre avec icône d'aide et explication
+    col_title_sla, col_help_sla = st.columns([20, 1])
+    with col_title_sla:
+        st.markdown('''
+        <div style="margin-bottom: 1rem;">
+            <h3 style="color: #1f2937; margin: 0; margin-bottom: 5px;">📊 SLA Clôture par Zone (CURATIVE uniquement)</h3>
+            <span style="font-size: 12px; color: #6b7280; font-style: italic;">
+                Il s'agit d'objectifs de délai de clôture des interventions de maintenance. "Critical" = SLA ≤3j ouvrés ; "Normal" = SLA ≤7j ouvrés ; "Low" = SLA ≤10j ouvrés ; "Warning" = SLA ≤20j ouvrés
+            </span>
+        </div>
+        ''', unsafe_allow_html=True)
+    with col_help_sla:
+        help_icon_html_sla = f'''
+        <div id="help_icon_faq-maint-sla" style="
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(10, 132, 255, 0.1);
+            border: 1px solid rgba(10, 132, 255, 0.3);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 4px;
+        " onclick="
+            var btn = document.querySelector('button[data-help-nav=\\'faq-maint-sla\\']');
+            if (btn) btn.click();
+        " onmouseover="this.style.background='rgba(10, 132, 255, 0.2)'; this.style.borderColor='rgba(10, 132, 255, 0.5)';" onmouseout="this.style.background='rgba(10, 132, 255, 0.1)'; this.style.borderColor='rgba(10, 132, 255, 0.3)';" title="Cliquez pour voir l'aide">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #0A84FF;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+        </div>
+        '''
+        st.markdown(help_icon_html_sla, unsafe_allow_html=True)
+        
+        # Bouton Streamlit invisible pour déclencher la navigation
+        if st.button("", key=f"help_nav_faq-maint-sla", help=None, use_container_width=True):
+            st.session_state.vue_active = 'faq'
+            st.session_state.faq_section_to_scroll = 'faq-maint-sla'
+            st.rerun()
+        
+        # Ajouter l'attribut data-help-nav au bouton
+        st.markdown(f'''
+        <script>
+        (function() {{
+            var btn = document.querySelector('button[data-testid*="help_nav_faq-maint-sla"]');
+            if (btn) {{
+                btn.setAttribute('data-help-nav', 'faq-maint-sla');
+                btn.style.display = 'none';
+            }}
+        }})();
+        </script>
+        ''', unsafe_allow_html=True)
     
-    df_sla_zone_sev = get_sla_cloture_par_zone_severite(annee_principale)
+    # Filtres individuels pour ce graphique
+    annees_selectionnees_sla, categories_selectionnees_sla, zones_selectionnees_sla = create_filters_section("sla_")
+    annee_principale_sla = annees_selectionnees_sla[0] if annees_selectionnees_sla else 2025
+    
+    df_sla_zone_sev = get_sla_cloture_par_zone_severite(annee_principale_sla)
     
     if not df_sla_zone_sev.empty:
         # Créer un graphique par zone de maintenance
@@ -7440,21 +7727,12 @@ def show_maintenance_view():
     # ============================================
     # SECTION: Zones à fortes densités par intervention
     # ============================================
-    st.markdown('''
-    <div style="
-        padding: 16px 24px;
-        margin: 2rem 0 1rem 0;
-        font-size: 1.3rem;
-        font-weight: 600;
-        color: #1f2937;
-        background: rgba(255, 255, 255, 0.65);
-        border: 1px solid rgba(0, 0, 0, 0.1);
-        border-radius: 20px;
-        backdrop-filter: blur(20px) saturate(160%);
-        -webkit-backdrop-filter: blur(20px) saturate(160%);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-    ">🗺️ Zones à fortes densités par intervention</div>
-    ''', unsafe_allow_html=True)
+    st.markdown('<div style="padding: 16px 24px; margin: 2rem 0 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("🗺️ Zones à fortes densités par intervention", "faq-maint-carte")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Fonction pour récupérer les interventions par site avec coordonnées et zones de maintenance
     def get_interventions_par_site_geo(annee):
@@ -7477,7 +7755,11 @@ def show_maintenance_view():
         df = load_data_from_db(query)
         return df if df is not None and not df.empty else pd.DataFrame()
     
-    df_interventions_geo = get_interventions_par_site_geo(annee_principale)
+    # Filtres individuels pour les cartes
+    annees_selectionnees_map, categories_selectionnees_map, zones_selectionnees_map = create_filters_section("map_interventions_")
+    annee_principale_map = annees_selectionnees_map[0] if annees_selectionnees_map else 2025
+    
+    df_interventions_geo = get_interventions_par_site_geo(annee_principale_map)
     
     if not df_interventions_geo.empty:
         # Calculer le total d'interventions pour les pourcentages
@@ -9210,21 +9492,7 @@ def show_sites_view():
     
     with tab1:
         # S.1 Liste Complète des Sites
-        st.markdown('''
-        <div style="
-            padding: 16px 24px;
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #1f2937;
-            background: rgba(255, 255, 255, 0.65);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(20px) saturate(160%);
-            -webkit-backdrop-filter: blur(20px) saturate(160%);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        ">📋 Liste Complète des Sites</div>
-        ''', unsafe_allow_html=True)
+        show_title_with_help("📋 S.1 Liste Complète des Sites", "faq-sites-liste", style="padding: 16px 24px; margin: 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);")
         
         # Filtres
         col_f1, col_f2, col_f3 = st.columns(3)
@@ -9267,21 +9535,7 @@ def show_sites_view():
     
     with tab2:
         # S.2 Tableau Détaillé par Site
-        st.markdown('''
-        <div style="
-            padding: 16px 24px;
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #1f2937;
-            background: rgba(255, 255, 255, 0.65);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(20px) saturate(160%);
-            -webkit-backdrop-filter: blur(20px) saturate(160%);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        ">📊 Tableau Détaillé par Site</div>
-        ''', unsafe_allow_html=True)
+        show_title_with_help("📊 S.2 Tableau Détaillé par Site", "faq-sites-tableau-detaille", style="padding: 16px 24px; margin: 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);")
         
         annee_tab2 = st.selectbox("Année", [2025, 2024, 2023], index=0, key="tab2_annee")
         df_detaille = get_tableau_detaille_sites(annee_tab2)
@@ -9308,21 +9562,7 @@ def show_sites_view():
         
         # S.3 Fiche Détaillée Site
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('''
-        <div style="
-            padding: 16px 24px;
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #1f2937;
-            background: rgba(255, 255, 255, 0.65);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(20px) saturate(160%);
-            -webkit-backdrop-filter: blur(20px) saturate(160%);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        ">📄 Fiche Détaillée Site</div>
-        ''', unsafe_allow_html=True)
+        show_title_with_help("📄 S.3 Fiche Détaillée Site", "faq-sites-fiche", style="padding: 16px 24px; margin: 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);")
         
         df_liste = get_liste_sites()
         if not df_liste.empty:
@@ -9371,21 +9611,7 @@ def show_sites_view():
     
     with tab3:
         # S.O Onduleurs par Site
-        st.markdown('''
-        <div style="
-            padding: 16px 24px;
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #1f2937;
-            background: rgba(255, 255, 255, 0.65);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(20px) saturate(160%);
-            -webkit-backdrop-filter: blur(20px) saturate(160%);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        ">⚡ Onduleurs par Site</div>
-        ''', unsafe_allow_html=True)
+        show_title_with_help("⚡ S.O Onduleurs par Site", "faq-sites-onduleurs", style="padding: 16px 24px; margin: 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);")
         
         # Statistiques Globales
         st.markdown('<h4 style="color: #1f2937; margin: 1rem 0;">Statistiques Globales Onduleurs</h4>', unsafe_allow_html=True)
@@ -9615,21 +9841,7 @@ def show_sites_view():
     
     with tab4:
         # S.5 Carte Interactive
-        st.markdown('''
-        <div style="
-            padding: 16px 24px;
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #1f2937;
-            background: rgba(255, 255, 255, 0.65);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(20px) saturate(160%);
-            -webkit-backdrop-filter: blur(20px) saturate(160%);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        ">🌍 Carte & Distribution</div>
-        ''', unsafe_allow_html=True)
+        show_title_with_help("🌍 S.5 Carte & Distribution", "faq-sites-carte", style="padding: 16px 24px; margin: 1rem 0; font-size: 1.3rem; font-weight: 600; color: #1f2937; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 20px; backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);")
         
         df_carte = get_liste_sites_complete()
         if not df_carte.empty and df_carte['latitude'].notna().any() and df_carte['longitude'].notna().any():
@@ -10203,6 +10415,1111 @@ def get_cout_maintenance_par_prestataire(annee):
     return df if df is not None and not df.empty else pd.DataFrame()
 
 
+def show_faq_view(section_to_scroll=None):
+    """Affiche la vue FAQ complète avec toutes les documentations
+    
+    Args:
+        section_to_scroll: ID de la section vers laquelle scroller automatiquement
+    """
+    
+    st.markdown('''
+    <div style="
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #1f2937;
+        text-align: center;
+        margin-bottom: 3rem;
+        padding: 28px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    ">
+        ❓ FAQ - Documentation Complète du Dashboard
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Script pour gérer le scroll automatique vers les sections
+    scroll_script = f'''
+    <script>
+    // Fonction pour scroller vers une section spécifique
+    function scrollToSection(sectionId) {{
+        const element = document.getElementById(sectionId);
+        if (element) {{
+            element.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+        }}
+    }}
+    
+    // Scroller vers la section demandée au chargement
+    {f"setTimeout(() => scrollToSection('{section_to_scroll}'), 500);" if section_to_scroll else ""}
+    
+    // Écouter les changements de hash dans l'URL
+    window.addEventListener('hashchange', function() {{
+        const hash = window.location.hash.substring(1);
+        if (hash) {{
+            setTimeout(() => scrollToSection(hash), 300);
+        }}
+    }});
+    </script>
+    '''
+    st.markdown(scroll_script, unsafe_allow_html=True)
+    
+    # Table des matières
+    st.markdown('''
+    <div style="
+        padding: 20px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+        margin-bottom: 2rem;
+    ">
+        <h2 style="color: #1f2937; margin-bottom: 1rem;">📑 Table des matières</h2>
+        <ul style="list-style: none; padding: 0;">
+            <li style="margin: 8px 0;"><a href="#faq-dashboard" style="color: #0A84FF; text-decoration: none;">📊 Vue Dashboard</a></li>
+            <li style="margin: 8px 0;"><a href="#faq-performance" style="color: #0A84FF; text-decoration: none;">📈 Vue Performance</a></li>
+            <li style="margin: 8px 0;"><a href="#faq-maintenance" style="color: #0A84FF; text-decoration: none;">🔧 Vue Maintenance</a></li>
+            <li style="margin: 8px 0;"><a href="#faq-sites" style="color: #0A84FF; text-decoration: none;">🏢 Vue Sites</a></li>
+            <li style="margin: 8px 0;"><a href="#faq-finance" style="color: #0A84FF; text-decoration: none;">💰 Vue Finance</a></li>
+        </ul>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION FAQ DASHBOARD
+    # ============================================
+    st.markdown('<div id="faq-dashboard" style="scroll-margin-top: 100px;"></div>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        margin-bottom: 2rem;
+    ">
+        <h2 style="color: #1f2937; border-bottom: 2px solid #0A84FF; padding-bottom: 10px;">📊 Vue Dashboard</h2>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Sites mis en service
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-sites-service" style="color: #1f2937; margin-top: 0;">Sites mis en service en 2025</h3>
+        <p><strong>Description:</strong> Nombre total de sites mis en service durant l'année sélectionnée.</p>
+        <p><strong>Calcul:</strong> <code>COUNT(DISTINCT id_site) WHERE YEAR(date_mise_en_service) = [année]</code></p>
+        <p><strong>Table SQLite:</strong> <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>date_mise_en_service</code></p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Production Totale
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-production-totale" style="color: #1f2937; margin-top: 0;">Production Totale en 2025</h3>
+        <p><strong>Description:</strong> Production totale d'électricité générée par tous les sites sur l'année sélectionnée.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel) / 1000</code> (en GWh)</p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel</code>, <code>annee</code></p>
+        <p><strong>Unitaire:</strong> GWh (Gigawatt-heures)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Puissance Installée
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-puissance-installee" style="color: #1f2937; margin-top: 0;">Puissance Installée en 2025</h3>
+        <p><strong>Description:</strong> Puissance totale installée cumulée jusqu'à l'année sélectionnée.</p>
+        <p><strong>Calcul:</strong> <code>SUM(exposition.puissance_nominale__kWc_) WHERE YEAR(date_mise_en_service) <= [année] / 1000</code> (en MWc)</p>
+        <p><strong>Table SQLite:</strong> <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>puissance_nominale__kWc_</code>, <code>date_mise_en_service</code></p>
+        <p><strong>Unitaire:</strong> MWc (Mégawatt-crête)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Déviation PR
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-deviation-pr" style="color: #1f2937; margin-top: 0;">Déviation Performance Ratio en 2025</h3>
+        <p><strong>Description:</strong> Écart moyen entre le Performance Ratio réel et le PR budget sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>AVG(calculs_annuel_sites.dev_pr WHERE annee = [année])</code></p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>dev_pr</code>, <code>annee</code></p>
+        <p><strong>Formule:</strong> <code>dev_pr = pr_réel - pr_budget</code></p>
+        <p><strong>Unitaire:</strong> % (pourcentage)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Performance Ratio Moyen
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-pr-moyen" style="color: #1f2937; margin-top: 0;">Performance Ratio Moyen</h3>
+        <p><strong>Description:</strong> Performance Ratio moyen de tous les sites sur l'année sélectionnée.</p>
+        <p><strong>Calcul:</strong> <code>AVG(calculs_annuel_sites.pr_réel WHERE annee = [année])</code></p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>pr_réel</code>, <code>annee</code></p>
+        <p><strong>Unitaire:</strong> % (pourcentage)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Seuils:</strong> Vert ≥80%, Orange 70-80%, Rouge &lt;70%</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Production vs Budget
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-production-budget" style="color: #1f2937; margin-top: 0;">Production vs Budget</h3>
+        <p><strong>Description:</strong> Comparaison de la production réelle avec la production budget (PVSyst).</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel) / 1000</code> (GWh) vs <code>SUM(calculs_annuel_sites.prod_pvsyst) / 1000</code> (GWh)</p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel</code>, <code>prod_pvsyst</code>, <code>annee</code></p>
+        <p><strong>Écart:</strong> <code>((prod_reel - prod_pvsyst) / prod_pvsyst) * 100</code> (%)</p>
+        <p><strong>Comparaison:</strong> vs budget (production PVSyst)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Disponibilité Contractuelle
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-disponibilite" style="color: #1f2937; margin-top: 0;">Disponibilité Contractuelle</h3>
+        <p><strong>Description:</strong> Taux de disponibilité contractuelle moyen des sites sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>AVG(calculs_annuel_sites.dispo_contrat WHERE annee = [année])</code></p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>dispo_contrat</code>, <code>annee</code></p>
+        <p><strong>Unitaire:</strong> % (pourcentage)</p>
+        <p><strong>Cible:</strong> ≥98%</p>
+        <p><strong>Comparaison:</strong> vs cible (≥98%)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Interventions Total
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-interventions" style="color: #1f2937; margin-top: 0;">Interventions Total 2025</h3>
+        <p><strong>Description:</strong> Nombre total d'interventions de maintenance sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>COUNT(interventions.numero_intervention) WHERE YEAR(date_creation_intervention) = [année]</code></p>
+        <p><strong>Table SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>numero_intervention</code>, <code>date_creation_intervention</code></p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Coût Maintenance
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-cout-maintenance" style="color: #1f2937; margin-top: 0;">Coût Maintenance 2025</h3>
+        <p><strong>Description:</strong> Coût total de maintenance sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>SUM(interventions.facturation_intervention) / 1000</code> (k€) pour l'année</p>
+        <p><strong>Table SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>facturation_intervention</code>, <code>date_creation_intervention</code></p>
+        <p><strong>Unitaire:</strong> M€ (Millions d'euros)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Chiffre d'Affaires
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-ca" style="color: #1f2937; margin-top: 0;">Chiffre d'Affaires 2025</h3>
+        <p><strong>Description:</strong> Chiffre d'affaires total généré par la vente d'électricité sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000000</code> (M€)</p>
+        <p><strong>Table SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>annee</code></p>
+        <p><strong>Unitaire:</strong> M€ (Millions d'euros)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Taux Résolution
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-taux-resolution" style="color: #1f2937; margin-top: 0;">Taux Résolution Interventions</h3>
+        <p><strong>Description:</strong> Pourcentage d'interventions CURATIVE clôturées sur l'année.</p>
+        <p><strong>Calcul:</strong> <code>(COUNT(*) WHERE status_intervention IN ('closed', 'terminated', 'validated') AND categorie = 'CURATIVE') / COUNT(*) WHERE categorie = 'CURATIVE' * 100</code></p>
+        <p><strong>Table SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>status_intervention</code>, <code>categorie</code>, <code>date_creation_intervention</code></p>
+        <p><strong>Unitaire:</strong> % (pourcentage)</p>
+        <p><strong>Cible:</strong> ≥95%</p>
+        <p><strong>Filtre:</strong> Interventions CURATIVE uniquement</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Total Onduleurs
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-onduleurs" style="color: #1f2937; margin-top: 0;">Total Onduleurs</h3>
+        <p><strong>Description:</strong> Nombre total d'onduleurs installés sur tous les sites.</p>
+        <p><strong>Calcul:</strong> <code>COUNT(DISTINCT onduleurs.id_onduleur)</code></p>
+        <p><strong>Table SQLite:</strong> <code>onduleurs</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_onduleur</code></p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Bénéfices
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-benefices" style="color: #1f2937; margin-top: 0;">Bénéfices (CA vente électricité - coûts interventions) 2025</h3>
+        <p><strong>Description:</strong> Bénéfices nets après déduction des coûts de maintenance.</p>
+        <p><strong>Calcul:</strong> <code>CA Total - Coût Maintenance Total</code></p>
+        <p><strong>Formule:</strong> <code>Bénéfices = SUM(prod_reel_distributeur * tarif_edf) - SUM(facturation_intervention)</code></p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code>, <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>facturation_intervention</code></p>
+        <p><strong>Unitaire:</strong> M€ (Millions d'euros)</p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Prévision Fin d'Année
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-prevision" style="color: #1f2937; margin-top: 0;">Prévision Fin d'Année (Run-Rate)</h3>
+        <p><strong>Description:</strong> Prévision de production en fin d'année basée sur le run-rate (extrapolation YTD).</p>
+        <p><strong>Calcul:</strong> <code>Production_YTD * (12 / nombre_mois_YTD)</code></p>
+        <p><strong>Formule:</strong> <code>Prévision = SUM(prod_reel) / nombre_mois_YTD * 12</code></p>
+        <p><strong>Table SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel</code>, <code>date</code></p>
+        <p><strong>Unitaire:</strong> TWh (Térawatt-heures)</p>
+        <p><strong>Méthode:</strong> Extrapolation linéaire du rythme actuel sur 12 mois</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Delta Production vs 2024
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-delta-production" style="color: #1f2937; margin-top: 0;">Δ Production vs 2024 (Jan-Sep)</h3>
+        <p><strong>Description:</strong> Évolution de la production sur les 9 premiers mois de l'année par rapport à 2024.</p>
+        <p><strong>Calcul:</strong> <code>((Production_2025_Jan-Sep - Production_2024_Jan-Sep) / Production_2024_Jan-Sep) * 100</code></p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel</code>, <code>date</code></p>
+        <p><strong>Période:</strong> Janvier à Septembre</p>
+        <p><strong>Unitaire:</strong> % (pourcentage de variation)</p>
+        <p><strong>Comparaison:</strong> 2025 vs 2024 sur la même période</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # KPI Taille Moyenne d'un Site
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-kpi-taille-moyenne" style="color: #1f2937; margin-top: 0;">Taille Moyenne d'un Site</h3>
+        <p><strong>Description:</strong> Puissance moyenne installée par site.</p>
+        <p><strong>Calcul:</strong> <code>AVG(exposition.puissance_nominale__kWc_)</code></p>
+        <p><strong>Table SQLite:</strong> <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>puissance_nominale__kWc_</code></p>
+        <p><strong>Unitaire:</strong> kWc (Kilowatt-crête)</p>
+        <p><strong>Filtres:</strong> Aucun filtre individuel (KPI global)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION FAQ PERFORMANCE
+    # ============================================
+    st.markdown('<div id="faq-performance" style="scroll-margin-top: 100px;"></div>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        margin: 3rem 0 2rem 0;
+    ">
+        <h2 style="color: #1f2937; border-bottom: 2px solid #0A84FF; padding-bottom: 10px;">📈 Vue Performance</h2>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # P.1 Production Mensuelle vs Budget
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-production-mensuelle" style="color: #1f2937; margin-top: 0;">📊 Production Mensuelle vs Budget</h3>
+        <p><strong>Description:</strong> Comparaison graphique de la production mensuelle réelle vs budget avec cumuls.</p>
+        <p><strong>Calcul:</strong></p>
+        <ul>
+            <li><strong>Budget:</strong> <code>SUM(calculs_mensuel_sites.prod_pvsyst) / 1000</code> (GWh)</li>
+            <li><strong>Réel:</strong> <code>SUM(calculs_mensuel_sites.prod_reel) / 1000</code> (GWh)</li>
+            <li><strong>Cumul:</strong> Somme cumulative des valeurs mensuelles</li>
+        </ul>
+        <p><strong>Table SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_pvsyst</code>, <code>prod_reel</code>, <code>date</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique combiné avec barres (mensuelles) et lignes (cumulées)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # P.3 Écarts
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-ecarts" style="color: #1f2937; margin-top: 0;">📉 Écarts Production, Irradiation et Disponibilité vs Budget</h3>
+        <p><strong>Description:</strong> Graphique montrant les écarts en pourcentage par rapport au budget pour production, irradiation et disponibilité.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Écart Production:</strong> <code>((prod_reel - prod_budget) / prod_budget) * 100</code></li>
+            <li><strong>Écart Irradiation:</strong> <code>((irra_reel - irra_budget) / irra_budget) * 100</code></li>
+            <li><strong>Écart Disponibilité Brut:</strong> <code>dispo_brut - 99</code> (écart par rapport à 99% cible)</li>
+            <li><strong>Écart Disponibilité Contrat:</strong> <code>dispo_contrat - 99</code></li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel</code>, <code>prod_pvsyst</code>, <code>irra_reel</code>, <code>irra_pvsyst_incl</code>, <code>dispo_brut</code>, <code>dispo_contrat</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique en barres groupées avec couleurs conditionnelles (vert/rouge selon positif/négatif)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Tableau mensuel
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-tableau-mensuel" style="color: #1f2937; margin-top: 0;">📊 Tableau mensuel des indicateurs (2025 / 2024)</h3>
+        <p><strong>Description:</strong> Tableau comparatif détaillé des indicateurs mensuels avec comparaison année N vs N-1.</p>
+        <p><strong>Indicateurs calculés:</strong></p>
+        <ul>
+            <li><strong>Nb sites:</strong> <code>COUNT(DISTINCT id_site)</code></li>
+            <li><strong>Prod Pvsyst (GWh):</strong> <code>SUM(prod_pvsyst) / 1000</code></li>
+            <li><strong>Moy Irrad Pvsyst:</strong> <code>AVG(irra_pvsyst_incl)</code></li>
+            <li><strong>Prod Réelle (GWh):</strong> <code>SUM(prod_reel) / 1000</code></li>
+            <li><strong>Moy Irrad Réelle:</strong> <code>AVG(irra_reel)</code></li>
+            <li><strong>Dispo Contrat:</strong> <code>AVG(dispo_contrat)</code> (%)</li>
+            <li><strong>Dispo Brut:</strong> <code>AVG(dispo_brut)</code> (%)</li>
+            <li><strong>Dév Prod (%):</strong> <code>AVG(dev_prod)</code></li>
+            <li><strong>Dév Irrad (%):</strong> <code>AVG(dev_irra)</code></li>
+            <li><strong>PR Budget:</strong> <code>AVG(pr_budget)</code> (%)</li>
+            <li><strong>PR Réel:</strong> <code>AVG(pr_réel)</code> (%)</li>
+            <li><strong>Dév PR (%):</strong> <code>AVG(dev_pr)</code></li>
+            <li><strong>Performance Spécifique (kWh/kWc):</strong> <code>AVG((prod_reel * 1000) / puissance_nominale__kWc_)</code></li>
+            <li><strong>Taux d'Atteinte Objectif (%):</strong> <code>AVG(100 + dev_prod)</code></li>
+        </ul>
+        <p><strong>Table SQLite:</strong> <code>calculs_mensuel_sites</code>, <code>exposition</code> (pour puissance)</p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Affichage:</strong> Toutes les lignes sont visibles (12 mois + TOTAL)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Tableau par SPV
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-tableau-spv" style="color: #1f2937; margin-top: 0;">📊 Tableau des indicateurs par SPV</h3>
+        <p><strong>Description:</strong> Tableau comparatif des indicateurs agrégés par SPV (Société de Portage Vert) avec comparaison année N vs N-1.</p>
+        <p><strong>Calculs:</strong> Mêmes indicateurs que le tableau mensuel mais agrégés par <code>spv</code></p>
+        <p><strong>Table SQLite:</strong> <code>calculs_mensuel_sites</code>, <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>spv</code>, <code>id_site</code>, <code>prod_pvsyst</code>, <code>prod_reel</code>, <code>irra_pvsyst_incl</code>, <code>irra_reel</code>, <code>dispo_contrat</code>, <code>dispo_brut</code>, <code>dev_prod</code>, <code>dev_irra</code>, <code>pr_budget</code>, <code>pr_réel</code>, <code>dev_pr</code>, <code>puissance_nominale__kWc_</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Affichage:</strong> Toutes les lignes sont visibles (tous les SPV)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # P.4 Détail des Pertes (Waterfall)
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-waterfall" style="color: #1f2937; margin-top: 0;">💧 Détail des Pertes (Waterfall)</h3>
+        <p><strong>Description:</strong> Graphique waterfall montrant la décomposition détaillée des pertes entre le budget P50 et la production réelle.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Budget P50:</strong> Production théorique prévue (valeur de référence)</li>
+            <li><strong>Indisponibilité Réseau:</strong> Pertes dues aux coupures réseau (MWh négatif)</li>
+            <li><strong>Prix négatifs:</strong> Pertes liées aux prix négatifs du marché (MWh négatif)</li>
+            <li><strong>Indisponibilité APEX:</strong> Pertes dues aux indisponibilités techniques APEX (MWh négatif)</li>
+            <li><strong>Irradiation & Simulation:</strong> Gains liés à l'irradiation supérieure aux prévisions (MWh positif)</li>
+            <li><strong>Écart résiduel:</strong> Écart non expliqué (MWh négatif)</li>
+            <li><strong>Production réelle:</strong> Production finale mesurée (valeur absolue)</li>
+        </ul>
+        <p><strong>Formule:</strong> <code>Production réelle = Budget P50 + Indisponibilité Réseau + Prix négatifs + Indisponibilité APEX + Irradiation & Simulation + Écart résiduel</code></p>
+        <p><strong>Tables SQLite:</strong> Données simulées (en attente de vraies données)</p>
+        <p><strong>Filtres individuels:</strong> Aucun filtre (données globales)</p>
+        <p><strong>Visualisation:</strong> Graphique waterfall Plotly avec couleurs conditionnelles (vert = positif, rouge = négatif, bleu = valeurs absolues)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # P.5 Carte Gisement Solaire
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-carte-gisement" style="color: #1f2937; margin-top: 0;">🌍 Carte Gisement Solaire par Zone</h3>
+        <p><strong>Description:</strong> Carte interactive montrant la répartition géographique des sites avec leur potentiel solaire (irradiation).</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Irradiation moyenne:</strong> <code>AVG(irra_reel)</code> par zone géographique</li>
+            <li><strong>Production moyenne:</strong> <code>AVG(prod_reel)</code> par zone</li>
+            <li><strong>Nombre de sites:</strong> <code>COUNT(DISTINCT id_site)</code> par zone</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code>, <code>exposition</code> (pour coordonnées géographiques)</p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>latitude</code>, <code>longitude</code>, <code>irra_reel</code>, <code>prod_reel</code>, <code>zone_mainteneur</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Carte Mapbox avec marqueurs colorés par irradiation, taille par production</p>
+        <p><strong>Zones affichées:</strong> France Métropolitaine + Territoires d'Outre-Mer (Guadeloupe, Martinique, Guyane, Réunion, Mayotte)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Irradiation Réelle vs Théorique
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-irradiation" style="color: #1f2937; margin-top: 0;">☀️ Irradiation Réelle vs Théorique</h3>
+        <p><strong>Description:</strong> Comparaison graphique de l'irradiation réelle mesurée vs l'irradiation théorique prévue (PVSyst).</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Irradiation Réelle:</strong> <code>AVG(irra_reel)</code> par mois</li>
+            <li><strong>Irradiation Théorique (PVSyst):</strong> <code>AVG(irra_pvsyst_incl)</code> par mois</li>
+            <li><strong>Écart:</strong> <code>((irra_reel - irra_pvsyst_incl) / irra_pvsyst_incl) * 100</code> (%)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>irra_reel</code>, <code>irra_pvsyst_incl</code>, <code>date</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique en barres groupées (réel vs théorique) avec ligne d'écart</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Corrélation Irradiation/Production
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-perf-correlation" style="color: #1f2937; margin-top: 0;">📊 Corrélation Irradiation/Production</h3>
+        <p><strong>Description:</strong> Analyse de la corrélation entre l'irradiation solaire et la production d'électricité.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Corrélation de Pearson:</strong> Coefficient de corrélation linéaire entre <code>irra_reel</code> et <code>prod_reel</code></li>
+            <li><strong>Régression linéaire:</strong> Droite de tendance <code>Production = a * Irradiation + b</code></li>
+            <li><strong>Coefficient de détermination R²:</strong> Qualité de la corrélation (0 à 1)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>irra_reel</code>, <code>prod_reel</code>, <code>date</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Nuage de points avec droite de régression et coefficient de corrélation affiché</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION FAQ MAINTENANCE
+    # ============================================
+    st.markdown('<div id="faq-maintenance" style="scroll-margin-top: 100px;"></div>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        margin: 3rem 0 2rem 0;
+    ">
+        <h2 style="color: #1f2937; border-bottom: 2px solid #0A84FF; padding-bottom: 10px;">🔧 Vue Maintenance</h2>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # M.1 Chronologie Maintenance
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-chronologie" style="color: #1f2937; margin-top: 0;">📅 M.1 Chronologie Maintenance</h3>
+        <p><strong>Description:</strong> Graphique chronologique montrant l'évolution mensuelle des interventions par catégorie (CURATIVE, PREVENTIF, NETTOYAGE) avec comparaison année N-1.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Interventions par catégorie:</strong> <code>COUNT(interventions.numero_intervention) GROUP BY categorie, mois</code></li>
+            <li><strong>Disponibilité contractuelle:</strong> <code>AVG(dispo_contrat)</code> par mois (affichée sur axe secondaire)</li>
+            <li><strong>Comparaison N-1:</strong> Même calcul pour l'année précédente (affichée en hachuré)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code>, <code>calculs_mensuel_sites</code> (pour disponibilité)</p>
+        <p><strong>Colonnes utilisées:</strong> <code>numero_intervention</code>, <code>date_creation_intervention</code>, <code>categorie</code>, <code>zone_mainteneur</code>, <code>dispo_contrat</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Barres empilées mensuelles (catégories) + ligne de disponibilité (axe secondaire) + barres hachurées pour N-1</p>
+        <p><strong>Couleurs:</strong> CURATIVE (rouge), PREVENTIF (orange), NETTOYAGE (bleu)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # M.2 Interventions par Catégorie
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-treemap-categorie" style="color: #1f2937; margin-top: 0;">🗂️ M.2 Interventions par Catégorie (Treemap)</h3>
+        <p><strong>Description:</strong> Visualisation en treemap montrant la répartition des interventions par catégorie avec taille proportionnelle au nombre d'interventions.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Nombre d'interventions:</strong> <code>COUNT(interventions.numero_intervention) GROUP BY categorie</code></li>
+            <li><strong>Pourcentage:</strong> <code>(COUNT(*) / SUM(COUNT(*)) OVER()) * 100</code></li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>numero_intervention</code>, <code>categorie</code>, <code>date_creation_intervention</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Treemap Plotly avec rectangles de taille proportionnelle, couleurs par catégorie</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # M.5 Interventions par Sévérité
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-treemap-severite" style="color: #1f2937; margin-top: 0;">⚠️ M.5 Interventions par Sévérité (Treemap)</h3>
+        <p><strong>Description:</strong> Visualisation en treemap montrant la répartition des interventions par niveau de sévérité.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Nombre d'interventions:</strong> <code>COUNT(interventions.numero_intervention) GROUP BY severite</code></li>
+            <li><strong>Niveaux de sévérité:</strong> Basé sur la colonne <code>severite</code> ou <code>priorite</code></li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>numero_intervention</code>, <code>severite</code> (ou <code>priorite</code>), <code>date_creation_intervention</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Treemap Plotly avec couleurs par sévérité (rouge = critique, orange = moyen, vert = faible)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Taux de Résolution
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-taux-resolution" style="color: #1f2937; margin-top: 0;">✅ Taux de Résolution (CURATIVE uniquement)</h3>
+        <p><strong>Description:</strong> Pourcentage d'interventions curatives résolues sur le total des interventions curatives.</p>
+        <p><strong>Calcul:</strong> <code>(COUNT(CASE WHEN ticket_resolu = 1 OR status_intervention LIKE '%Résolu%' THEN 1 END) / COUNT(*)) * 100</code></p>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>ticket_resolu</code>, <code>status_intervention</code>, <code>categorie</code> (filtre CURATIVE uniquement)</p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique en barres ou jauge avec pourcentage</p>
+        <p><strong>Note:</strong> Seules les interventions CURATIVE sont prises en compte pour ce calcul</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # MTTR
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-mttr" style="color: #1f2937; margin-top: 0;">⏱️ MTTR Moyen (CURATIVE uniquement)</h3>
+        <p><strong>Description:</strong> Mean Time To Repair - Temps moyen de réparation pour les interventions curatives.</p>
+        <p><strong>Calcul:</strong> <code>AVG(duree_intervention_sur_site)</code> pour les interventions CURATIVE</p>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>duree_intervention_sur_site</code>, <code>categorie</code> (filtre CURATIVE uniquement)</p>
+        <p><strong>Unitaire:</strong> Heures</p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique en barres ou métrique avec unité</p>
+        <p><strong>Note:</strong> Seules les interventions CURATIVE sont prises en compte</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # SLA Clôture
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-sla" style="color: #1f2937; margin-top: 0;">📋 SLA Clôture par Zone (CURATIVE uniquement)</h3>
+        <p><strong>Description:</strong> Taux de respect des Service Level Agreements (SLA) pour la clôture des interventions curatives, par zone de maintenance.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>SLA 7 jours:</strong> <code>(COUNT(CASE WHEN julianday(date_fin_intervention) - julianday(date_creation_intervention) <= 7 THEN 1 END) / COUNT(*)) * 100</code></li>
+            <li><strong>SLA 30 jours:</strong> <code>(COUNT(CASE WHEN julianday(date_fin_intervention) - julianday(date_creation_intervention) <= 30 THEN 1 END) / COUNT(*)) * 100</code></li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>date_creation_intervention</code>, <code>date_fin_intervention</code>, <code>zone_mainteneur</code>, <code>categorie</code> (filtre CURATIVE uniquement)</p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Graphique en barres groupées par zone avec deux séries (SLA 7j et SLA 30j)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # Carte Interventions
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-maint-carte" style="color: #1f2937; margin-top: 0;">🗺️ Zones à fortes densités par intervention</h3>
+        <p><strong>Description:</strong> Carte interactive montrant la répartition géographique des interventions avec densité par zone.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Nombre d'interventions par site:</strong> <code>COUNT(interventions.numero_intervention) GROUP BY id_site</code></li>
+            <li><strong>Coordonnées:</strong> <code>exposition.latitude</code>, <code>exposition.longitude</code></li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code>, <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>numero_intervention</code>, <code>id_site</code>, <code>latitude</code>, <code>longitude</code></p>
+        <p><strong>Filtres individuels:</strong> Année(s), Catégorie(s), Zone Maintenance</p>
+        <p><strong>Visualisation:</strong> Carte Mapbox avec marqueurs colorés par densité d'interventions, taille par nombre</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION FAQ SITES
+    # ============================================
+    st.markdown('<div id="faq-sites" style="scroll-margin-top: 100px;"></div>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        margin: 3rem 0 2rem 0;
+    ">
+        <h2 style="color: #1f2937; border-bottom: 2px solid #0A84FF; padding-bottom: 10px;">🏢 Vue Sites</h2>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-sites-liste" style="color: #1f2937; margin-top: 0;">📋 S.1 Liste Complète des Sites</h3>
+        <p><strong>Description:</strong> Tableau listant tous les sites avec leurs informations principales.</p>
+        <p><strong>Tables SQLite:</strong> <code>exposition</code></p>
+        <p><strong>Colonnes affichées:</strong> Nom du site, Puissance, Date mise en service, Zone, SPV, etc.</p>
+        <p><strong>Filtres:</strong> Recherche par nom, tri par colonnes</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-sites-onduleurs" style="color: #1f2937; margin-top: 0;">⚡ Onduleurs par Site</h3>
+        <p><strong>Description:</strong> Informations détaillées sur les onduleurs installés par site.</p>
+        <p><strong>Tables SQLite:</strong> <code>onduleurs</code>, <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>fabricant</code>, <code>modele</code>, <code>puissance_nominale</code>, <code>nombre_onduleurs</code></p>
+        <p><strong>Métriques:</strong> Total onduleurs, Puissance totale, Nombre de fabricants, Nombre de modèles, Sites équipés</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-sites-carte" style="color: #1f2937; margin-top: 0;">🗺️ S.5 Carte Interactive des Sites</h3>
+        <p><strong>Description:</strong> Carte géographique interactive montrant tous les sites avec leurs informations.</p>
+        <p><strong>Tables SQLite:</strong> <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>latitude</code>, <code>longitude</code>, <code>nom_site</code>, <code>puissance_nominale__kWc_</code></p>
+        <p><strong>Visualisation:</strong> Carte Mapbox avec marqueurs colorés par performance, taille par puissance</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    # ============================================
+    # SECTION FAQ FINANCE
+    # ============================================
+    st.markdown('<div id="faq-finance" style="scroll-margin-top: 100px;"></div>', unsafe_allow_html=True)
+    st.markdown('''
+    <div style="
+        padding: 24px;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        border-radius: 20px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        margin: 3rem 0 2rem 0;
+    ">
+        <h2 style="color: #1f2937; border-bottom: 2px solid #0A84FF; padding-bottom: 10px;">💰 Vue Finance</h2>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-ca" style="color: #1f2937; margin-top: 0;">💰 Chiffre d'Affaires Total</h3>
+        <p><strong>Description:</strong> Chiffre d'affaires total généré par la vente de l'électricité produite.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000000</code> (en M€)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>annee</code></p>
+        <p><strong>Comparaison:</strong> vs année précédente (2024)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-manque" style="color: #1f2937; margin-top: 0;">📉 Manque à Gagner</h3>
+        <p><strong>Description:</strong> Écart entre le CA réalisé et le CA budgété.</p>
+        <p><strong>Calcul:</strong> <code>CA_Budget - CA_Réalisé</code> (en k€)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>prod_pvsyst</code>, <code>tarif_edf</code></p>
+        <p><strong>Visualisation:</strong> Waterfall chart montrant Budget → Pertes → Réalisé</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-ca-mensuel" style="color: #1f2937; margin-top: 0;">📊 CA Mensuel et Cumulé</h3>
+        <p><strong>Description:</strong> Graphique montrant l'évolution mensuelle du chiffre d'affaires avec cumul.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_mensuel_sites.prod_reel_distributeur * tarif_edf) / 1000</code> par mois (en k€)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>date</code></p>
+        <p><strong>Visualisation:</strong> Barres mensuelles + ligne cumulée</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-ca-site" style="color: #1f2937; margin-top: 0;">🏢 CA par Site (Top 20)</h3>
+        <p><strong>Description:</strong> Chiffre d'affaires généré par chaque site, affichant les 20 sites avec le CA le plus élevé.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000</code> par site (en k€)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>annee</code></p>
+        <p><strong>Visualisation:</strong> Barres horizontales triées par CA décroissant</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-ca-spv" style="color: #1f2937; margin-top: 0;">📊 CA par SPV (Top 15)</h3>
+        <p><strong>Description:</strong> Chiffre d'affaires généré par SPV (Société de Portage Vert), affichant les 15 SPV avec le CA le plus élevé.</p>
+        <p><strong>Calcul:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000</code> par SPV (en k€)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code>, <code>exposition</code> (pour SPV)</p>
+        <p><strong>Colonnes utilisées:</strong> <code>spv</code>, <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>annee</code></p>
+        <p><strong>Visualisation:</strong> Barres horizontales triées par CA décroissant</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-cout-prod" style="color: #1f2937; margin-top: 0;">💰 Coût/Production par Site (Top 20)</h3>
+        <p><strong>Description:</strong> Ratio coût de maintenance par unité de production pour chaque site.</p>
+        <p><strong>Calcul:</strong> <code>SUM(interventions.facturation_intervention) / SUM(calculs_annuel_sites.prod_reel) * 1000</code> (€/MWh)</p>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code>, <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>facturation_intervention</code>, <code>prod_reel</code>, <code>annee</code></p>
+        <p><strong>Unitaire:</strong> €/MWh (euros par Mégawatt-heure)</p>
+        <p><strong>Visualisation:</strong> Barres horizontales triées par coût/production décroissant</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-cout-kwc" style="color: #1f2937; margin-top: 0;">⚡ Coût/kWc par Site (Top 20)</h3>
+        <p><strong>Description:</strong> Ratio coût de maintenance par unité de puissance installée pour chaque site.</p>
+        <p><strong>Calcul:</strong> <code>SUM(interventions.facturation_intervention) / SUM(exposition.puissance_nominale__kWc_)</code> (€/kWc)</p>
+        <p><strong>Tables SQLite:</strong> <code>interventions</code>, <code>exposition</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>facturation_intervention</code>, <code>puissance_nominale__kWc_</code></p>
+        <p><strong>Unitaire:</strong> €/kWc (euros par kilowatt-crête)</p>
+        <p><strong>Visualisation:</strong> Barres horizontales triées par coût/kWc décroissant</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-marge" style="color: #1f2937; margin-top: 0;">📊 Analyse Marge par Site</h3>
+        <p><strong>Description:</strong> Calcul de la marge nette (CA - Coûts) / CA par site.</p>
+        <p><strong>Calcul:</strong> <code>((CA - Coûts_Maintenance) / CA) * 100</code> (%)</p>
+        <p><strong>Formules détaillées:</strong></p>
+        <ul>
+            <li><strong>CA:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000</code> (k€)</li>
+            <li><strong>Coûts:</strong> <code>SUM(interventions.facturation_intervention) / 1000</code> (k€)</li>
+            <li><strong>Marge:</strong> <code>((CA - Coûts) / CA) * 100</code> (%)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code>, <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>id_site</code>, <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>facturation_intervention</code>, <code>annee</code></p>
+        <p><strong>Visualisation:</strong> Barres horizontales triées par marge décroissante</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-rentabilite" style="color: #1f2937; margin-top: 0;">📈 F.11 Rentabilité Nette</h3>
+        <p><strong>Description:</strong> Rentabilité nette globale (CA Total - Coûts Maintenance Total) pour l'année sélectionnée.</p>
+        <p><strong>Calcul:</strong> <code>CA_Total - Coûts_Maintenance_Total</code> (en k€ ou M€)</p>
+        <p><strong>Formules détaillées:</strong></p>
+        <ul>
+            <li><strong>CA Total:</strong> <code>SUM(calculs_annuel_sites.prod_reel_distributeur * tarif_edf) / 1000000</code> (M€)</li>
+            <li><strong>Coûts Total:</strong> <code>SUM(interventions.facturation_intervention) / 1000000</code> (M€)</li>
+            <li><strong>Rentabilité:</strong> <code>CA_Total - Coûts_Total</code> (M€)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code>, <code>interventions</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_reel_distributeur</code>, <code>tarif_edf</code>, <code>facturation_intervention</code>, <code>annee</code></p>
+        <p><strong>Visualisation:</strong> Métrique avec comparaison année précédente</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-budget-prod" style="color: #1f2937; margin-top: 0;">📊 F.14 Budget Production vs Réalisé</h3>
+        <p><strong>Description:</strong> Comparaison graphique entre le budget de production (PVSyst) et la production réelle réalisée.</p>
+        <p><strong>Calculs:</strong></p>
+        <ul>
+            <li><strong>Budget:</strong> <code>SUM(calculs_annuel_sites.prod_pvsyst) / 1000</code> (GWh)</li>
+            <li><strong>Réalisé:</strong> <code>SUM(calculs_annuel_sites.prod_reel) / 1000</code> (GWh)</li>
+            <li><strong>Écart:</strong> <code>((prod_reel - prod_pvsyst) / prod_pvsyst) * 100</code> (%)</li>
+        </ul>
+        <p><strong>Tables SQLite:</strong> <code>calculs_annuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_pvsyst</code>, <code>prod_reel</code>, <code>annee</code></p>
+        <p><strong>Visualisation:</strong> Barres comparatives (budget vs réalisé) avec métrique d'écart</p>
+    </div>
+    ''', unsafe_allow_html=True)
+    
+    st.markdown('''
+    <div style="
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.5);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #0A84FF;
+    ">
+        <h3 id="faq-finance-ecart-budget" style="color: #1f2937; margin-top: 0;">📉 F.17 Écart Budget Production</h3>
+        <p><strong>Description:</strong> Graphique montrant l'écart entre le budget et le réalisé pour la production, par mois.</p>
+        <p><strong>Calcul:</strong> <code>((prod_reel - prod_pvsyst) / prod_pvsyst) * 100</code> par mois (%)</p>
+        <p><strong>Tables SQLite:</strong> <code>calculs_mensuel_sites</code></p>
+        <p><strong>Colonnes utilisées:</strong> <code>prod_pvsyst</code>, <code>prod_reel</code>, <code>date</code></p>
+        <p><strong>Visualisation:</strong> Barres empilées mensuelles avec couleurs conditionnelles (vert = positif, rouge = négatif)</p>
+    </div>
+    ''', unsafe_allow_html=True)
+
+
 def show_finance_view():
     """Affiche la vue Finance complète"""
     
@@ -10378,6 +11695,10 @@ def show_finance_view():
     
     # F.3 CA Mensuel
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📊 CA Mensuel et Cumulé", "faq-finance-ca-mensuel")
+    
     df_ca_mens = get_ca_mensuel(annee_finance)
     if not df_ca_mens.empty:
         fig = go.Figure()
@@ -10397,7 +11718,7 @@ def show_finance_view():
             yaxis='y2'
         ))
         fig.update_layout(
-            title='📊 CA Mensuel et Cumulé',
+            title='',
             xaxis_title='Mois',
             yaxis_title='CA Mensuel (k€)',
             yaxis2=dict(title='CA Cumulé (k€)', overlaying='y', side='right'),
@@ -10414,6 +11735,10 @@ def show_finance_view():
     
     with col_f2:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("🏢 CA par Site (Top 20)", "faq-finance-ca-site")
+        
         df_ca_site = get_ca_par_site(annee_finance)
         if not df_ca_site.empty:
             fig = px.bar(
@@ -10421,7 +11746,7 @@ def show_finance_view():
                 x='ca_k',
                 y='site',
                 orientation='h',
-                title='🏢 CA par Site (Top 20)',
+                title='',
                 labels={'ca_k': 'CA (k€)', 'site': 'Site'},
                 color='ca_k',
                 color_continuous_scale='Blues'
@@ -10435,13 +11760,17 @@ def show_finance_view():
     
     with col_f5:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("📊 CA par SPV (Top 15)", "faq-finance-ca-spv")
+        
         df_ca_spv = get_ca_par_spv(annee_finance)
         if not df_ca_spv.empty:
             fig = px.bar(
                 df_ca_spv.head(15),
                 x='spv',
                 y='ca_k',
-                title='📊 CA par SPV (Top 15)',
+                title='',
                 labels={'spv': 'SPV', 'ca_k': 'CA (k€)'},
                 color='nb_sites',
                 color_continuous_scale='Viridis',
@@ -10478,6 +11807,10 @@ def show_finance_view():
     
     # F.9 Manque à Gagner Waterfall
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("💧 Manque à Gagner (Waterfall)", "faq-finance-manque")
+    
     df_manque = get_manque_a_gagner(annee_finance)
     if not df_manque.empty:
         budget = df_manque['ca_budget_k'].iloc[0]
@@ -10494,7 +11827,7 @@ def show_finance_view():
             connector={"line": {"color": "rgb(63, 63, 63)"}},
         ))
         fig.update_layout(
-            title="💧 Manque à Gagner (Waterfall)",
+            title="",
             yaxis_title="Montant (k€)",
             height=400
         )
@@ -10509,13 +11842,17 @@ def show_finance_view():
     
     with col_f7:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("⚡ Coût Maintenance / Production (€/MWh)", "faq-finance-cout-prod")
+        
         df_cout_prod = get_cout_maintenance_par_production(annee_finance)
         if not df_cout_prod.empty:
             fig = px.bar(
                 df_cout_prod,
                 x='mois',
                 y='cout_par_mwh',
-                title='⚡ Coût Maintenance / Production (€/MWh)',
+                title='',
                 labels={'mois': 'Mois', 'cout_par_mwh': '€/MWh'},
                 color='cout_par_mwh',
                 color_continuous_scale='Reds'
@@ -10529,6 +11866,10 @@ def show_finance_view():
     
     with col_f8:
         st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+        
+        # Titre avec icône d'aide
+        show_title_with_help("⚡ Coût Maintenance / kWc (Top 15)", "faq-finance-cout-kwc")
+        
         df_cout_kwc = get_cout_maintenance_par_kwc(annee_finance)
         if not df_cout_kwc.empty:
             fig = px.bar(
@@ -10536,7 +11877,7 @@ def show_finance_view():
                 x='cout_par_kwc',
                 y='nom_site',
                 orientation='h',
-                title='⚡ Coût Maintenance / kWc (Top 15)',
+                title='',
                 labels={'cout_par_kwc': '€/kWc', 'nom_site': 'Site'},
                 color='cout_par_kwc',
                 color_continuous_scale='Oranges'
@@ -10552,6 +11893,9 @@ def show_finance_view():
     
     # F.25 Analyse Marge par Site
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📊 Analyse Marge par Site", "faq-finance-marge")
     df_marge = get_analyse_marge_par_site(annee_finance)
     if not df_marge.empty:
         fig = px.bar(
@@ -10575,6 +11919,10 @@ def show_finance_view():
     # F.11 Rentabilité Nette
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📈 F.11 Rentabilité Nette Mensuelle", "faq-finance-rentabilite")
+    
     df_renta = get_rentabilite_nette(annee_finance)
     if not df_renta.empty:
         fig = go.Figure()
@@ -10600,7 +11948,7 @@ def show_finance_view():
             line=dict(color='#0A84FF', width=3, dash='dash')
         ))
         fig.update_layout(
-            title='📈 Rentabilité Nette Mensuelle',
+            title='',
             xaxis_title='Mois',
             yaxis_title='Montant (k€)',
             height=400
@@ -10634,6 +11982,10 @@ def show_finance_view():
     
     # F.14 Budget Production vs Réalisé
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08); margin-bottom: 1rem;">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📊 F.14 Budget Production vs Réalisé", "faq-finance-budget-prod")
+    
     df_budget = get_budget_production_vs_realise(annee_finance)
     if not df_budget.empty:
         fig = go.Figure()
@@ -10652,7 +12004,7 @@ def show_finance_view():
             opacity=0.9
         ))
         fig.update_layout(
-            title='📊 Budget Production vs Réalisé',
+            title='',
             xaxis_title='Mois',
             yaxis_title='CA (k€)',
             barmode='group',
@@ -10666,6 +12018,9 @@ def show_finance_view():
     
     # F.17 Écart Budget Production
     st.markdown('<div style="padding: 16px; background: rgba(255, 255, 255, 0.5); border-radius: 20px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);">', unsafe_allow_html=True)
+    
+    # Titre avec icône d'aide
+    show_title_with_help("📉 F.17 Écart Budget Production", "faq-finance-ecart-budget")
     if not df_budget.empty:
         fig = px.bar(
             df_budget,
@@ -10900,7 +12255,7 @@ def main():
         st.session_state.vue_active = 'dashboard'
     
     # Navigation avec boutons
-    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns(5)
+    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6 = st.columns(6)
     
     with nav_col1:
         if st.button("📊 Dashboard", use_container_width=True, type="primary" if st.session_state.vue_active == 'dashboard' else "secondary"):
@@ -10927,6 +12282,11 @@ def main():
             st.session_state.vue_active = 'finance'
             st.rerun()
     
+    with nav_col6:
+        if st.button("❓ FAQ", use_container_width=True, type="primary" if st.session_state.vue_active == 'faq' else "secondary"):
+            st.session_state.vue_active = 'faq'
+            st.rerun()
+    
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Router vers la vue active
@@ -10941,6 +12301,14 @@ def main():
         return
     elif st.session_state.vue_active == 'finance':
         show_finance_view()
+        return
+    elif st.session_state.vue_active == 'faq':
+        # Gérer le scroll automatique vers la section demandée
+        faq_section_to_scroll = st.session_state.get('faq_section_to_scroll', None)
+        show_faq_view(faq_section_to_scroll)
+        # Nettoyer après utilisation
+        if 'faq_section_to_scroll' in st.session_state:
+            del st.session_state.faq_section_to_scroll
         return
     # Sinon, continuer avec la vue Dashboard
     
@@ -11004,8 +12372,9 @@ def main():
     with col1:
         # Sites : augmentation = bon (normal si delta > 0)
         delta_color_sites = "normal" if delta_sites > 0 else ("inverse" if delta_sites < 0 else "normal")
+        show_kpi_with_help("Sites mis en service en 2025", "faq-kpi-sites-service")
         st.metric(
-            label="Sites mis en service en 2025",
+            label="",
             value=f"{sites_2025} sites",
             delta=f"2024: {sites_2024} ({delta_sites_pct:+.1f}%)",
             delta_color=delta_color_sites
@@ -11014,8 +12383,9 @@ def main():
     with col2:
         # Production : augmentation = bon (normal si delta > 0)
         delta_color_prod = "normal" if delta_prod > 0 else ("inverse" if delta_prod < 0 else "normal")
+        show_kpi_with_help("Production Totale en 2025", "faq-kpi-production-totale")
         st.metric(
-            label="Production Totale en 2025",
+            label="",
             value=format_energy(prod_2025, decimals=2),
             delta=f"2024: {format_energy(prod_2024, decimals=2)} ({delta_prod_pct:+.1f}%)",
             delta_color=delta_color_prod
@@ -11024,16 +12394,18 @@ def main():
     with col3:
         # Puissance : augmentation = bon (normal si delta > 0)
         delta_color_puissance = "normal" if delta_puissance > 0 else ("inverse" if delta_puissance < 0 else "normal")
+        show_kpi_with_help("Puissance Installée en 2025", "faq-kpi-puissance-installee")
         st.metric(
-            label="Puissance Installée en 2025",
+            label="",
             value=f"{puissance_2025:.1f} MWc",
             delta=f"2024: {puissance_2024:.1f} MWc ({delta_puissance_pct:+.1f}%)",
             delta_color=delta_color_puissance
         )
     
     with col4:
+        show_kpi_with_help("Déviation Performance Ratio en 2025", "faq-kpi-deviation-pr")
         st.metric(
-            label="Déviation Performance Ratio en 2025",
+            label="",
             value=f"{dev_pr_2025:.1f} %",
             delta=f"2024: {dev_pr_2024:.1f} ({delta_dev_pr:+.1f}%)",
             delta_color="inverse"
@@ -11100,8 +12472,9 @@ def main():
         delta_pr = pr_2025 - pr_2024
         # Si PR 2025 < PR 2024 (dégradation), afficher en rouge
         delta_color_pr = "inverse" if delta_pr < 0 else "normal"
+        show_kpi_with_help("Performance Ratio Moyen", "faq-kpi-pr-moyen")
         st.metric(
-            label="Performance Ratio Moyen",
+            label="",
             value=f"{pr_2025:.1f} %",
             delta=f"2024: {pr_2024:.1f} ({delta_pr:+.1f}%)",
             delta_color=delta_color_pr
@@ -11111,8 +12484,9 @@ def main():
         # Production vs Budget
         # Si production < budget (écart négatif), afficher en rouge
         delta_color_budget = "inverse" if ecart_prod < 0 else "normal"
+        show_kpi_with_help("Production vs Budget", "faq-kpi-production-budget")
         st.metric(
-            label="Production vs Budget",
+            label="",
             value=format_energy(prod_2025, decimals=2),
             delta=f"Budget: {format_energy(prod_budget_2025, decimals=2)} ({ecart_prod:+.1f}%)",
             delta_color=delta_color_budget
@@ -11121,8 +12495,9 @@ def main():
     with col3:
         # Disponibilité
         dispo_color = "#10b981" if dispo_2025 >= 98 else "#f59e0b" if dispo_2025 >= 95 else "#ef4444"
+        show_kpi_with_help("Disponibilité Contractuelle", "faq-kpi-disponibilite")
         st.metric(
-            label="Disponibilité Contractuelle",
+            label="",
             value=f"{dispo_2025:.1f} %",
             delta="Target: ≥98%" if dispo_2025 >= 98 else None
         )
@@ -11138,8 +12513,9 @@ def main():
         delta_inter_pct = (delta_inter / nb_interventions_2024 * 100) if nb_interventions_2024 != 0 else 0
         # Si interventions augmentent (mauvais), afficher en rouge
         delta_color_inter = "inverse" if delta_inter > 0 else "normal"
+        show_kpi_with_help("Interventions Total 2025", "faq-kpi-interventions")
         st.metric(
-            label="Interventions Total 2025",
+            label="",
             value=format_count(nb_interventions_2025),
             delta=f"2024: {format_count(nb_interventions_2024)} ({delta_inter_pct:+.1f}%)",
             delta_color=delta_color_inter
@@ -11151,8 +12527,9 @@ def main():
         delta_cout_pct = (delta_cout / cout_maintenance_2024 * 100) if cout_maintenance_2024 != 0 else 0
         # Si coûts augmentent (mauvais), afficher en rouge
         delta_color_cout = "inverse" if delta_cout > 0 else "normal"
+        show_kpi_with_help("Coût Maintenance 2025", "faq-kpi-cout-maintenance")
         st.metric(
-            label="Coût Maintenance 2025",
+            label="",
             value=format_currency(cout_maintenance_2025, decimals=3),
             delta=f"2024: {format_currency(cout_maintenance_2024, decimals=3)} ({delta_cout_pct:+.1f}%)",
             delta_color=delta_color_cout
@@ -11162,8 +12539,9 @@ def main():
         # CA Total
         # Si CA diminue (mauvais), afficher en rouge
         delta_color_ca = "inverse" if delta_ca < 0 else "normal"
+        show_kpi_with_help("Chiffre d'Affaires 2025", "faq-kpi-ca")
         st.metric(
-            label="Chiffre d'Affaires 2025",
+            label="",
             value=format_currency(ca_2025, decimals=3),
             delta=f"2024: {format_currency(ca_2024, decimals=3)} ({delta_ca_pct:+.1f}%)",
             delta_color=delta_color_ca
@@ -11177,16 +12555,18 @@ def main():
     with col7:
         # Taux Résolution
         resolution_color = "#10b981" if taux_resolution_2025 >= 95 else "#f59e0b" if taux_resolution_2025 >= 90 else "#ef4444"
+        show_kpi_with_help("Taux Résolution Interventions", "faq-kpi-taux-resolution")
         st.metric(
-            label="Taux Résolution Interventions",
+            label="",
             value=f"{taux_resolution_2025:.1f} %",
             delta="Target: ≥95%" if taux_resolution_2025 >= 95 else None
         )
     
     with col8:
         # Nombre Onduleurs
+        show_kpi_with_help("Total Onduleurs", "faq-kpi-onduleurs")
         st.metric(
-            label="Total Onduleurs",
+            label="",
             value=format_count(nb_onduleurs),
             delta=None
         )
@@ -11199,8 +12579,9 @@ def main():
         delta_benefices_pct = (delta_benefices / benefices_2024 * 100) if benefices_2024 != 0 else 0
         # Si bénéfices diminuent (mauvais), afficher en rouge
         delta_color_benefices = "inverse" if delta_benefices < 0 else "normal"
+        show_kpi_with_help("Bénéfices (CA vente électricité - coûts interventions) 2025", "faq-kpi-benefices")
         st.metric(
-            label="Bénéfices (CA vente électricité - coûts interventions) 2025",
+            label="",
             value=format_currency(benefices_2025, decimals=3),
             delta=f"2024: {format_currency(benefices_2024, decimals=3)} ({delta_benefices_pct:+.1f}%)",
             delta_color=delta_color_benefices
@@ -11214,8 +12595,9 @@ def main():
     with col10:
         # Prévision fin d'année - run-rate
         progress_pct = (prod_ytd_2025 / prevision_2025 * 100) if prevision_2025 > 0 else 0
+        show_kpi_with_help("Prévision Fin d'Année (Run-Rate)", "faq-kpi-prevision")
         st.metric(
-            label="Prévision Fin d'Année (Run-Rate)",
+            label="",
             value=format_energy(prevision_2025, decimals=2),
             delta=f"YTD: {format_energy(prod_ytd_2025, decimals=2)} ({nb_mois_2025} mois)"
         )
@@ -11227,8 +12609,9 @@ def main():
         # Δ Production vs 2024 (Jan-Sep)
         # Si delta < 0 (production < 2024), afficher en rouge
         delta_color_delta_prod = "inverse" if delta_pct < 0 else "normal"
+        show_kpi_with_help("Δ Production vs 2024 (Jan-Sep)", "faq-kpi-delta-production")
         st.metric(
-            label="Δ Production vs 2024 (Jan-Sep)",
+            label="",
             value=f"{delta_pct:+.1f}%",
             delta=f"{format_energy(delta_gwh, decimals=2)} ({format_energy(prod_2025_m1_9, decimals=2)} vs {format_energy(prod_2024_m1_9, decimals=2)})",
             delta_color=delta_color_delta_prod
@@ -11236,8 +12619,9 @@ def main():
     
     with col12:
         # Taille moyenne d'un site (en kWc)
+        show_kpi_with_help("Taille Moyenne d'un Site", "faq-kpi-taille-moyenne")
         st.metric(
-            label="Taille Moyenne d'un Site",
+            label="",
             value=format_power_capacity(taille_moyenne, decimals=0),
             delta=None
         )
